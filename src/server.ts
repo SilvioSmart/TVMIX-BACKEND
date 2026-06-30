@@ -12,7 +12,11 @@ import { closeTranscodeQueue } from "./lib/transcodeQueue.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
-const allowedOrigins = (process.env.CORS_ORIGINS ?? "https://www.tvmix.it,https://tvmix.it")
+const allowedOrigins = (
+  process.env.CORS_ORIGINS ??
+  process.env.CORS_ALLOWED_ORIGINS ??
+  "https://www.tvmix.it,https://tvmix.it"
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
