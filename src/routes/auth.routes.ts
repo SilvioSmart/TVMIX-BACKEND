@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { requireAuth } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
@@ -18,7 +19,11 @@ const registrationSchema = credentialsSchema.extend({
   name: z.string().trim().min(2).max(100).optional(),
 });
 
-function createAccessToken(user: { id: string; email: string }): string {
+function createAccessToken(user: {
+  id: string;
+  email: string;
+  role: "USER" | "EDITOR" | "ADMIN";
+}): string {
   const secret = process.env.JWT_SECRET;
 
   if (!secret || secret.length < 32) {
@@ -26,7 +31,7 @@ function createAccessToken(user: { id: string; email: string }): string {
   }
 
   return jwt.sign(
-    { email: user.email },
+    { email: user.email, role: user.role },
     secret,
     {
       subject: user.id,
@@ -59,7 +64,7 @@ router.post("/register", async (req, res) => {
   const passwordHash = await bcrypt.hash(password, rounds);
   const user = await prisma.user.create({
     data: { email, passwordHash, name },
-    select: { id: true, email: true, name: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, createdAt: true },
   });
 
   return res.status(201).json({
@@ -84,10 +89,23 @@ router.post("/login", async (req, res) => {
   }
 
   return res.json({
-    user: { id: user.id, email: user.email, name: user.name },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
     accessToken: createAccessToken(user),
     tokenType: "Bearer",
   });
+});
+
+router.get("/me", requireAuth, async (_req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: res.locals.auth.sub },
+    select: { id: true, email: true, name: true, role: true, createdAt: true },
+  });
+
+  if (!user) {
+    return res.status(401).json({ error: "Utente non trovato" });
+  }
+
+  return res.json({ user });
 });
 
 export default router;

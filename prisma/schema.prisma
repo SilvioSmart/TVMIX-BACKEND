@@ -12,6 +12,7 @@ model User {
   email        String   @unique
   passwordHash String
   name         String?
+  role         UserRole @default(USER)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -19,22 +20,52 @@ model User {
 }
 
 model Video {
-  id          String     @id @default(uuid()) @db.Uuid
-  title       String
-  slug        String     @unique
-  description String?
+  id               String                @id @default(uuid()) @db.Uuid
+  title            String
+  slug             String                @unique
+  description      String?
   thumbnailUrl String?
-  hlsUrl      String
-  duration    Int?
-  published   Boolean    @default(false)
-  publishedAt DateTime?
-  categoryId  String     @db.Uuid
-  category    Category   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  hlsUrl           String?
+  sourceObjectKey  String?
+  originalFileName String?
+  processingStatus VideoProcessingStatus @default(PENDING)
+  processingError  String?
+  duration         Int?
+  published        Boolean               @default(false)
+  publishedAt      DateTime?
+  categoryId       String                @db.Uuid
+  category         Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  carouselSlides   HomepageCarouselSlide[]
+  seasonId         String?               @db.VarChar(6)
+  season           Season?               @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
   @@index([categoryId, published])
   @@index([published, publishedAt])
+  @@index([seasonId])
+}
+
+model HomepageCarouselSlide {
+  id          String   @id @default(uuid()) @db.Uuid
+  eyebrow     String?
+  title       String
+  subtitle    String?
+  description String?
+  imageUrl    String
+  ctaLabel    String?
+  ctaUrl      String?
+  sortOrder   Int
+  published   Boolean  @default(false)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  videoId     String?  @db.Uuid
+  video       Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([published, sortOrder])
+  @@index([videoId])
 }
 
 model Category {
@@ -43,8 +74,37 @@ model Category {
   slug        String   @unique
   description String?
   videos      Video[]
+  programs    Program[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model Program {
+  id          String    @id @db.VarChar(5)
+  name        String
+  slug        String    @unique
+  description String?
+  categoryId  String    @db.Uuid
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  seasons     Season[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([categoryId, name])
+}
+
+model Season {
+  id        String   @id @db.VarChar(6)
+  number    Int
+  title     String?
+  programId String   @db.VarChar(5)
+  program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  episodes  Video[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([programId, number])
+  @@index([programId, number])
 }
 
 model LiveStream {
@@ -63,8 +123,61 @@ model LiveStream {
   @@index([status])
 }
 
+model AppearanceMenuItem {
+  key         String   @id @db.VarChar(32)
+  label       String
+  description String?
+  sortOrder   Int
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled, sortOrder])
+}
+
+model FrontendMenuItem {
+  id        String            @id @default(uuid()) @db.Uuid
+  label     String
+  url       String
+  placement MenuItemPlacement @default(HEADER)
+  placements MenuItemPlacement[] @default([HEADER])
+  sortOrder Int
+  enabled   Boolean           @default(true)
+  external  Boolean           @default(false)
+  parentId  String?           @db.Uuid
+  parent    FrontendMenuItem?  @relation("FrontendMenuTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  FrontendMenuItem[] @relation("FrontendMenuTree")
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([placement, enabled, sortOrder])
+  @@index([parentId])
+}
+
 enum LiveStreamStatus {
   OFFLINE
   LIVE
   SCHEDULED
+}
+
+enum MenuItemPlacement {
+  HEADER
+  FOOTER
+  MOBILE
+}
+
+enum UserRole {
+  USER
+  EDITOR
+  ADMIN
+}
+
+enum VideoProcessingStatus {
+  PENDING
+  UPLOADING
+  UPLOADED
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
 }

@@ -35,71 +35,48 @@ function slugify(value: string): string {
 function verifySignature(req: RawBodyRequest): boolean {
   const secret = process.env.WEBHOOK_SECRET;
   if (!secret) return true;
-
   const rawBody = req.rawBody;
   const received = req.header("x-tvmix-signature") ?? "";
   if (!rawBody || !received) return false;
-
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
   const expectedBuffer = Buffer.from(expected, "hex");
   const receivedBuffer = Buffer.from(received, "hex");
-
-  return (
-    expectedBuffer.length === receivedBuffer.length &&
-    crypto.timingSafeEqual(expectedBuffer, receivedBuffer)
-  );
+  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
 router.post("/webhooks/video-ready", async (req: RawBodyRequest, res) => {
-  if (!verifySignature(req)) {
-    return res.status(401).json({ error: "Firma webhook non valida" });
-  }
-
+  if (!verifySignature(req)) return res.status(401).json({ error: "Firma webhook non valida" });
   const parsed = readyWebhookSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({
-      error: "Payload webhook non valido",
-      details: parsed.error.flatten().fieldErrors,
-    });
+    return res.status(400).json({ error: "Payload webhook non valido", details: parsed.error.flatten().fieldErrors });
   }
-
   const payload = parsed.data;
   const fallbackTitle = `Video ${payload.videoId.slice(0, 8)}`;
   const title = payload.title ?? fallbackTitle;
   const baseSlug = slugify(payload.slug ?? title) || payload.videoId;
   const categorySlug = slugify(payload.categorySlug ?? "on-demand");
   const categoryName = payload.categoryName ?? "On demand";
-  const duration = payload.durationSeconds
-    ? Math.round(payload.durationSeconds)
-    : undefined;
-
+  const duration = payload.durationSeconds ? Math.round(payload.durationSeconds) : undefined;
   const category = await prisma.category.upsert({
     where: { slug: categorySlug },
-    create: {
-      name: categoryName,
-      slug: categorySlug,
-      description: "Contenuti video pubblicati da TVMIX-WORKER",
-    },
+    create: { name: categoryName, slug: categorySlug, description: "Contenuti video pubblicati da TVMIX-WORKER" },
     update: {},
   });
-
-  const existing = await prisma.video.findUnique({
-    where: { id: payload.videoId },
-    select: { id: true },
-  });
-
+  const existing = await prisma.video.findUnique({ where: { id: payload.videoId }, select: { id: true, publishedAt: true } });
   const video = existing
     ? await prisma.video.update({
         where: { id: payload.videoId },
         data: {
           hlsUrl: payload.masterUrl,
-          duration,
+          ...(duration !== undefined ? { duration } : {}),
+          ...(payload.thumbnailUrl ? { thumbnailUrl: payload.thumbnailUrl } : {}),
+          ...(payload.description ? { description: payload.description } : {}),
+          processingStatus: "READY",
+          processingError: null,
           published: true,
-          publishedAt: new Date(),
-          thumbnailUrl: payload.thumbnailUrl,
-          description: payload.description,
+          publishedAt: existing.publishedAt ?? new Date(),
         },
-        select: { id: true, slug: true, hlsUrl: true, published: true },
+        select: { id: true, slug: true, hlsUrl: true, processingStatus: true, published: true },
       })
     : await prisma.video.create({
         data: {
@@ -109,14 +86,15 @@ router.post("/webhooks/video-ready", async (req: RawBodyRequest, res) => {
           description: payload.description,
           thumbnailUrl: payload.thumbnailUrl,
           hlsUrl: payload.masterUrl,
-          duration,
+          ...(duration !== undefined ? { duration } : {}),
+          processingStatus: "READY",
+          processingError: null,
           published: true,
           publishedAt: new Date(),
           categoryId: category.id,
         },
-        select: { id: true, slug: true, hlsUrl: true, published: true },
+        select: { id: true, slug: true, hlsUrl: true, processingStatus: true, published: true },
       });
-
   return res.json({ ok: true, data: video });
 });
 
