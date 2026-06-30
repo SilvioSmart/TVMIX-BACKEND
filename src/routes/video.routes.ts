@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { getTranscodeQueue } from "../lib/transcodeQueue.js";
 
 const router = Router();
 
@@ -89,6 +90,59 @@ router.get("/:id", async (req, res) => {
   }
 
   return res.json({ data: video });
+});
+
+const transcodeRequestSchema = z.object({
+  sourcePath: z.string().trim().min(1),
+  title: z.string().trim().min(1).max(180).optional(),
+  slug: z.string().trim().min(1).max(180).optional(),
+  description: z.string().trim().max(2000).optional(),
+  thumbnailUrl: z.string().url().optional(),
+  categorySlug: z.string().trim().min(1).max(80).optional(),
+  categoryName: z.string().trim().min(1).max(120).optional(),
+});
+
+router.post("/:id/transcode", async (req, res) => {
+  const secret = process.env.INTERNAL_API_SECRET;
+  const authorization = req.header("authorization") ?? "";
+  if (!secret || authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Non autorizzato" });
+  }
+
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) {
+    return res.status(400).json({ error: "ID video non valido" });
+  }
+
+  const parsed = transcodeRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Richiesta transcodifica non valida",
+      details: parsed.error.flatten().fieldErrors,
+    });
+  }
+
+  const queue = getTranscodeQueue();
+  const job = await queue.add(
+    "transcode-hls",
+    { videoId: id.data, ...parsed.data },
+    {
+      jobId: `video-${id.data}`,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 30_000 },
+      removeOnComplete: { age: 7 * 24 * 3600, count: 1000 },
+      removeOnFail: { age: 30 * 24 * 3600, count: 5000 },
+    },
+  );
+
+  return res.status(202).json({
+    ok: true,
+    data: {
+      jobId: job.id,
+      videoId: id.data,
+      queue: process.env.QUEUE_NAME ?? "tvmix-video-transcoding",
+    },
+  });
 });
 
 export default router;
