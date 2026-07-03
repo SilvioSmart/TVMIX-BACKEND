@@ -42,11 +42,21 @@ export function r2Key(path: string): string {
     : normalizedPath;
 }
 
+export function sanitizeR2FileName(fileName: string): string {
+  const cleaned = fileName
+    .normalize("NFC")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned || `upload-${Date.now()}`;
+}
+
 export function isOriginalObjectKey(objectKey: string): boolean {
   const escapedPrefix = r2Config.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const prefixPattern = escapedPrefix ? `${escapedPrefix}/` : "";
   return new RegExp(
-    `^${prefixPattern}originals/[0-9a-f-]{36}/source\\.(mp4|mov|mkv)$`,
+    `^${prefixPattern}originals/[^/]+\\.(mp4|mov|mkv)$`,
   ).test(objectKey);
 }
 

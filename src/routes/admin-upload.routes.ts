@@ -9,6 +9,7 @@ import {
   r2Config,
   r2Key,
   isOriginalObjectKey,
+  sanitizeR2FileName,
   verifyOriginalObject,
   verifyR2Bucket,
   verifyR2Object,
@@ -18,7 +19,7 @@ const router = Router();
 const contentTypes = ["video/mp4", "video/quicktime", "video/x-matroska"] as const;
 const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 const imageContentTypes = slideContentTypes;
-const uploadScopes = ["video", "slide", "thumbnail"] as const;
+const uploadScopes = ["video", "slide", "thumbnail", "locandina"] as const;
 
 const presignSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -42,13 +43,13 @@ const streamingUploadSchema = z.object({
   scope: z.enum(uploadScopes).default("video"),
 }).superRefine((value, ctx) => {
   if (
-    (value.scope === "slide" || value.scope === "thumbnail") &&
+    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina") &&
     !imageContentTypes.includes(value.contentType as typeof imageContentTypes[number])
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["contentType"],
-      message: "Per slide e thumbnail sono ammessi solo JPG, PNG, WebP o GIF",
+      message: "Per slide, thumbnail e locandine sono ammessi solo JPG, PNG, WebP o GIF",
     });
   }
   if (value.scope === "video" && !contentTypes.includes(value.contentType as typeof contentTypes[number])) {
@@ -98,30 +99,17 @@ router.post("/file", async (req, res) => {
     return res.status(413).json({ error: "Il file supera la dimensione massima consentita" });
   }
 
-  const videoExtensionByType = {
-    "video/mp4": "mp4",
-    "video/quicktime": "mov",
-    "video/x-matroska": "mkv",
-  } as const;
-  const slideExtensionByType = {
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/webp": "webp",
-    "image/gif": "gif",
-  } as const;
   const uploadId = parsed.data.videoId ?? randomUUID();
-  const objectKey =
-    parsed.data.scope === "slide" || parsed.data.scope === "thumbnail"
-      ? r2Key(
-          `${parsed.data.scope === "slide" ? "slide" : "Thumbnails"}/${uploadId}/image.${
-            slideExtensionByType[parsed.data.contentType as keyof typeof slideExtensionByType]
-          }`,
-        )
-      : r2Key(
-          `originals/${uploadId}/source.${
-            videoExtensionByType[parsed.data.contentType as keyof typeof videoExtensionByType]
-          }`,
-        );
+  const safeFileName = sanitizeR2FileName(parsed.data.fileName);
+  const objectKey = r2Key(
+    parsed.data.scope === "slide"
+      ? `slide/${safeFileName}`
+      : parsed.data.scope === "thumbnail"
+        ? `thumbnails/${safeFileName}`
+        : parsed.data.scope === "locandina"
+          ? `locandine/${safeFileName}`
+          : `originals/${safeFileName}`,
+  );
 
   try {
     const upload = new Upload({
@@ -171,15 +159,8 @@ router.post("/presign", async (req, res) => {
     return res.status(413).json({ error: "Il file supera la dimensione massima consentita" });
   }
 
-  const extensionByType = {
-    "video/mp4": "mp4",
-    "video/quicktime": "mov",
-    "video/x-matroska": "mkv",
-  } as const;
   const uploadId = videoId ?? randomUUID();
-  const objectKey = r2Key(
-    `originals/${uploadId}/source.${extensionByType[contentType]}`,
-  );
+  const objectKey = r2Key(`originals/${sanitizeR2FileName(fileName)}`);
   const command = new PutObjectCommand({
     Bucket: r2Config.bucket,
     Key: objectKey,
