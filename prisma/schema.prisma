@@ -135,6 +135,7 @@ model HomeModule {
   subtitle     String?
   type         HomeModuleType
   queryType    HomeModuleQueryType @default(LATEST)
+  sortMethod   HomeModuleSortMethod @default(RECENT)
   sortOrder    Int
   enabled      Boolean             @default(true)
   limit        Int                 @default(12)
@@ -260,4 +261,10 @@ enum HomeModuleQueryType {
   SEASON
   MANUAL
   LIVE
+}
+
+enum HomeModuleSortMethod {
+  RECENT
+  OLDEST
+  TITLE_ASC
 }

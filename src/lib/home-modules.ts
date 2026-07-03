@@ -24,12 +24,19 @@ const videoSelect = {
 export async function resolveModuleVideos(module: {
   id: string;
   queryType: string;
+  sortMethod?: string;
   limit: number;
   categoryId: string | null;
   programId: string | null;
   seasonId: string | null;
 }) {
   const take = Math.min(Math.max(module.limit || 12, 1), 48);
+  const orderBy: Prisma.VideoOrderByWithRelationInput[] =
+    module.sortMethod === "TITLE_ASC"
+      ? [{ title: "asc" }, { createdAt: "desc" }]
+      : module.sortMethod === "OLDEST"
+        ? [{ publishedAt: "asc" }, { createdAt: "asc" }]
+        : [{ publishedAt: "desc" }, { createdAt: "desc" }];
 
   if (module.queryType === "MANUAL") {
     const items = await prisma.homeModuleItem.findMany({
@@ -58,7 +65,7 @@ export async function resolveModuleVideos(module: {
   return prisma.video.findMany({
     where,
     select: videoSelect,
-    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+    orderBy,
     take,
   });
 }
@@ -81,4 +88,3 @@ export async function resolveModuleEpg(module: {
     take: 48,
   });
 }
-

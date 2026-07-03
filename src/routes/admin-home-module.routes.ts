@@ -26,6 +26,7 @@ const moduleSchema = z.object({
   subtitle: z.string().trim().max(240).nullable().optional(),
   type: z.enum(["CAROUSEL_SLIDER", "LIVE_EPG", "POSTER_RAIL"]),
   queryType: z.enum(["LATEST", "CATEGORY", "PROGRAM", "SEASON", "MANUAL", "LIVE"]).default("LATEST"),
+  sortMethod: z.enum(["RECENT", "OLDEST", "TITLE_ASC"]).default("RECENT"),
   sortOrder: z.coerce.number().int().min(0).max(9999),
   enabled: z.boolean().default(true),
   limit: z.coerce.number().int().min(1).max(48).default(12),
