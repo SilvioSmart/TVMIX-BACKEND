@@ -9,6 +9,7 @@ import videoRoutes from "./routes/video.routes.js";
 import liveChannelRoutes from "./routes/live-channel.routes.js";
 import menuRoutes from "./routes/menu.routes.js";
 import carouselRoutes from "./routes/carousel.routes.js";
+import moduleRoutes from "./routes/modules.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import { prisma } from "./lib/prisma.js";
 import { closeTranscodeQueue } from "./lib/transcodeQueue.js";
@@ -89,6 +90,7 @@ app.use("/api/v1/videos", videoRoutes);
 app.use("/api/v1/live-channels", liveChannelRoutes);
 app.use("/api/v1/menu", menuRoutes);
 app.use("/api/v1/carousel", carouselRoutes);
+app.use("/api/v1/modules", moduleRoutes);
 app.use("/internal", internalWebhookRoutes);
 
 app.use((_req, res) => {

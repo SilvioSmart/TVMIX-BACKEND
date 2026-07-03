@@ -17,7 +17,8 @@ import {
 const router = Router();
 const contentTypes = ["video/mp4", "video/quicktime", "video/x-matroska"] as const;
 const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
-const uploadScopes = ["video", "slide"] as const;
+const imageContentTypes = slideContentTypes;
+const uploadScopes = ["video", "slide", "thumbnail"] as const;
 
 const presignSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -35,16 +36,19 @@ const completeSchema = z.object({
 
 const streamingUploadSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
-  contentType: z.union([z.enum(contentTypes), z.enum(slideContentTypes)]),
+  contentType: z.union([z.enum(contentTypes), z.enum(imageContentTypes)]),
   size: z.number().int().positive(),
   videoId: z.string().uuid().optional(),
   scope: z.enum(uploadScopes).default("video"),
 }).superRefine((value, ctx) => {
-  if (value.scope === "slide" && !slideContentTypes.includes(value.contentType as typeof slideContentTypes[number])) {
+  if (
+    (value.scope === "slide" || value.scope === "thumbnail") &&
+    !imageContentTypes.includes(value.contentType as typeof imageContentTypes[number])
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["contentType"],
-      message: "Per le slide sono ammessi solo JPG, PNG, WebP o GIF",
+      message: "Per slide e thumbnail sono ammessi solo JPG, PNG, WebP o GIF",
     });
   }
   if (value.scope === "video" && !contentTypes.includes(value.contentType as typeof contentTypes[number])) {
@@ -107,9 +111,9 @@ router.post("/file", async (req, res) => {
   } as const;
   const uploadId = parsed.data.videoId ?? randomUUID();
   const objectKey =
-    parsed.data.scope === "slide"
+    parsed.data.scope === "slide" || parsed.data.scope === "thumbnail"
       ? r2Key(
-          `slide/${uploadId}/image.${
+          `${parsed.data.scope === "slide" ? "slide" : "Thumbnails"}/${uploadId}/image.${
             slideExtensionByType[parsed.data.contentType as keyof typeof slideExtensionByType]
           }`,
         )

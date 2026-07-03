@@ -36,6 +36,7 @@ model Video {
   categoryId       String                @db.Uuid
   category         Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   carouselSlides   HomepageCarouselSlide[]
+  homeModuleItems  HomeModuleItem[]
   seasonId         String?               @db.VarChar(6)
   season           Season?               @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   createdAt        DateTime              @default(now())
@@ -75,6 +76,7 @@ model Category {
   description String?
   videos      Video[]
   programs    Program[]
+  homeModules HomeModule[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -87,6 +89,7 @@ model Program {
   categoryId  String    @db.Uuid
   category    Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   seasons     Season[]
+  homeModules HomeModule[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -100,6 +103,7 @@ model Season {
   programId String   @db.VarChar(5)
   program   Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
   episodes  Video[]
+  homeModules HomeModule[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -117,10 +121,71 @@ model LiveStream {
   posterUrl   String?
   startedAt   DateTime?
   endedAt     DateTime?
+  homeModules HomeModule[]
+  epgItems    LiveEpgItem[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   @@index([status])
+}
+
+model HomeModule {
+  id           String              @id @default(uuid()) @db.Uuid
+  title        String
+  subtitle     String?
+  type         HomeModuleType
+  queryType    HomeModuleQueryType @default(LATEST)
+  sortOrder    Int
+  enabled      Boolean             @default(true)
+  limit        Int                 @default(12)
+  categoryId   String?             @db.Uuid
+  category     Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  programId    String?             @db.VarChar(5)
+  program      Program?            @relation(fields: [programId], references: [id], onDelete: SetNull)
+  seasonId     String?             @db.VarChar(6)
+  season       Season?             @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  liveStreamId String?             @db.Uuid
+  liveStream   LiveStream?         @relation(fields: [liveStreamId], references: [id], onDelete: SetNull)
+  items        HomeModuleItem[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([enabled, sortOrder])
+  @@index([type, enabled])
+  @@index([categoryId])
+  @@index([programId])
+  @@index([seasonId])
+  @@index([liveStreamId])
+}
+
+model HomeModuleItem {
+  id        String     @id @default(uuid()) @db.Uuid
+  moduleId  String     @db.Uuid
+  module    HomeModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  videoId   String     @db.Uuid
+  video     Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  sortOrder Int
+  createdAt DateTime   @default(now())
+
+  @@unique([moduleId, videoId])
+  @@index([moduleId, sortOrder])
+  @@index([videoId])
+}
+
+model LiveEpgItem {
+  id           String     @id @default(uuid()) @db.Uuid
+  liveStreamId String     @db.Uuid
+  liveStream   LiveStream @relation(fields: [liveStreamId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  startsAt     DateTime
+  endsAt       DateTime
+  thumbnailUrl String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([liveStreamId, startsAt])
+  @@index([startsAt, endsAt])
 }
 
 model AppearanceMenuItem {
@@ -180,4 +245,19 @@ enum VideoProcessingStatus {
   PROCESSING
   READY
   FAILED
+}
+
+enum HomeModuleType {
+  CAROUSEL_SLIDER
+  LIVE_EPG
+  POSTER_RAIL
+}
+
+enum HomeModuleQueryType {
+  LATEST
+  CATEGORY
+  PROGRAM
+  SEASON
+  MANUAL
+  LIVE
 }
