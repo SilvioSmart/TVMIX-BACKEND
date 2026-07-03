@@ -20,6 +20,16 @@ const readyWebhookSchema = z.object({
   categorySlug: z.string().trim().min(1).max(80).optional(),
   categoryName: z.string().trim().min(1).max(120).optional(),
   completedAt: z.string().datetime().optional(),
+  source: z.object({
+    width: z.number().optional(),
+    height: z.number().optional(),
+    hasAudio: z.boolean().optional(),
+  }).optional(),
+  renditions: z.array(z.object({
+    name: z.string(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+  })).optional(),
 });
 
 function slugify(value: string): string {
@@ -57,6 +67,17 @@ router.post("/webhooks/video-ready", async (req: RawBodyRequest, res) => {
   const categorySlug = slugify(payload.categorySlug ?? "on-demand");
   const categoryName = payload.categoryName ?? "On demand";
   const duration = payload.durationSeconds ? Math.round(payload.durationSeconds) : undefined;
+  const bestRendition = payload.renditions?.[0]?.name;
+  const sourceQuality =
+    payload.source?.height ? `${payload.source.height}p` : bestRendition;
+  const convertedObjectKey = (() => {
+    try {
+      const url = new URL(payload.masterUrl);
+      return decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+    } catch {
+      return null;
+    }
+  })();
   const category = await prisma.category.upsert({
     where: { slug: categorySlug },
     create: { name: categoryName, slug: categorySlug, description: "Contenuti video pubblicati da TVMIX-WORKER" },
@@ -69,6 +90,10 @@ router.post("/webhooks/video-ready", async (req: RawBodyRequest, res) => {
         data: {
           hlsUrl: payload.masterUrl,
           ...(duration !== undefined ? { duration } : {}),
+          mediaFormat: "HLS",
+          videoQuality: sourceQuality,
+          audioTracks: payload.source?.hasAudio ? [{ codec: "aac", channels: 2 }] : [],
+          convertedObjectKey,
           ...(payload.thumbnailUrl ? { thumbnailUrl: payload.thumbnailUrl } : {}),
           ...(payload.description ? { description: payload.description } : {}),
           processingStatus: "READY",
@@ -87,6 +112,10 @@ router.post("/webhooks/video-ready", async (req: RawBodyRequest, res) => {
           thumbnailUrl: payload.thumbnailUrl,
           hlsUrl: payload.masterUrl,
           ...(duration !== undefined ? { duration } : {}),
+          mediaFormat: "HLS",
+          videoQuality: sourceQuality,
+          audioTracks: payload.source?.hasAudio ? [{ codec: "aac", channels: 2 }] : [],
+          convertedObjectKey,
           processingStatus: "READY",
           processingError: null,
           published: true,

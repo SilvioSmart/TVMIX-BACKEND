@@ -31,6 +31,10 @@ model Video {
   processingStatus VideoProcessingStatus @default(PENDING)
   processingError  String?
   duration         Int?
+  mediaFormat      String?
+  videoQuality     String?
+  audioTracks      Json?
+  convertedObjectKey String?
   published        Boolean               @default(false)
   publishedAt      DateTime?
   categoryId       String                @db.Uuid
@@ -39,12 +43,15 @@ model Video {
   homeModuleItems  HomeModuleItem[]
   seasonId         String?               @db.VarChar(6)
   season           Season?               @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  episodeNumber    Int?
+  episodeCode      String?               @unique @db.VarChar(6)
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
 
   @@index([categoryId, published])
   @@index([published, publishedAt])
   @@index([seasonId])
+  @@index([episodeCode])
 }
 
 model HomepageCarouselSlide {
