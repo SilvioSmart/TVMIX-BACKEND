@@ -14,6 +14,7 @@ router.get("/", async (_req, res) => {
       subtitle: true,
       type: true,
       queryType: true,
+      sortMethod: true,
       sortOrder: true,
       limit: true,
       categoryId: true,
@@ -48,4 +49,3 @@ router.get("/", async (_req, res) => {
 });
 
 export default router;
-
