@@ -271,6 +271,7 @@ router.post("/:id/transcode", async (req, res) => {
     {
       videoId: video.id,
       sourcePath,
+      sourceObjectKey: video.sourceObjectKey ?? undefined,
       title: video.title,
       slug: video.slug,
       description: video.description ?? undefined,
