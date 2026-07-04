@@ -1,7 +1,15 @@
+import { spawn } from "node:child_process";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { r2, r2Config, r2Key, sanitizeR2FileName } from "../lib/r2.js";
 import { getTranscodeQueue } from "../lib/transcodeQueue.js";
 import {
   handlePrismaError,
@@ -14,6 +22,30 @@ import {
 } from "../lib/api-validation.js";
 
 const router = Router();
+
+function run(command: string, args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk).slice(-8000);
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0) return resolve();
+      reject(new Error(`ffmpeg terminato con code=${code} signal=${signal ?? "none"}\n${stderr}`));
+    });
+  });
+}
+
+function safeFrameFileName(slug: string, seconds: number) {
+  return sanitizeR2FileName(`${slug}-frame-${Math.round(seconds * 1000)}.jpg`);
+}
 
 function normalizeSlug(value: string) {
   return value.trim().replace(/^#+/, "");
@@ -302,6 +334,94 @@ router.post("/:id/transcode", async (req, res) => {
       processingStatus: updated.processingStatus,
     },
   });
+});
+
+router.post("/:id/frame-grab", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  const parsed = z.object({
+    time: z.number().min(0).max(24 * 60 * 60),
+  }).strict().safeParse(req.body ?? {});
+  if (!id.success) return sendValidationError(res, id.error);
+  if (!parsed.success) return sendValidationError(res, parsed.error);
+
+  const video = await prisma.video.findUnique({
+    where: { id: id.data },
+    include: {
+      category: true,
+      season: { include: { program: true } },
+    },
+  });
+  if (!video) return res.status(404).json({ error: "Video non trovato" });
+  if (!video.sourceObjectKey) {
+    return res.status(409).json({ error: "File originale R2 non disponibile per il frame grabber" });
+  }
+
+  const workDir = await mkdtemp(path.join(tmpdir(), `tvmix-frame-${video.id}-`));
+  const sourceExtension = path.extname(video.sourceObjectKey) || ".mp4";
+  const sourcePath = path.join(workDir, `source${sourceExtension}`);
+  const framePath = path.join(workDir, "frame.jpg");
+
+  try {
+    const source = await r2.send(new GetObjectCommand({
+      Bucket: r2Config.bucket,
+      Key: video.sourceObjectKey,
+    }));
+    if (!source.Body) throw new Error("Oggetto sorgente R2 vuoto");
+    await pipeline(source.Body as NodeJS.ReadableStream, createWriteStream(sourcePath));
+
+    const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
+    await run(ffmpeg, [
+      "-hide_banner",
+      "-nostdin",
+      "-y",
+      "-ss",
+      String(parsed.data.time),
+      "-i",
+      sourcePath,
+      "-frames:v",
+      "1",
+      "-q:v",
+      "2",
+      framePath,
+    ]);
+
+    const fileName = safeFrameFileName(video.slug, parsed.data.time);
+    const objectKey = r2Key(`thumbnails/${fileName}`);
+    await r2.send(new PutObjectCommand({
+      Bucket: r2Config.bucket,
+      Key: objectKey,
+      Body: createReadStream(framePath),
+      ContentType: "image/jpeg",
+      CacheControl: "public, max-age=31536000, immutable",
+      Metadata: {
+        "video-id": video.id,
+        "frame-time": String(parsed.data.time),
+      },
+    }));
+
+    const updated = await prisma.video.update({
+      where: { id: video.id },
+      data: { thumbnailUrl: `${r2Config.publicUrl}/${objectKey}` },
+      include: {
+        category: { select: { id: true, name: true, slug: true } },
+        season: { include: { program: true } },
+      },
+    });
+
+    return res.status(201).json({
+      data: updated,
+      frame: {
+        objectKey,
+        publicUrl: updated.thumbnailUrl,
+        time: parsed.data.time,
+      },
+    });
+  } catch (error) {
+    console.error("Frame grabber fallito", error);
+    return res.status(502).json({ error: "Creazione frame grabber non riuscita" });
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 });
 
 export default router;
