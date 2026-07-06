@@ -9,6 +9,8 @@ const videoSelect = {
   thumbnailUrl: true,
   hlsUrl: true,
   duration: true,
+  episodeNumber: true,
+  episodeCode: true,
   publishedAt: true,
   category: { select: { id: true, name: true, slug: true } },
   season: {
