@@ -48,7 +48,7 @@ const multipartPartSchema = z.object({
   uploadId: z.string().min(1).max(2048),
   objectKey: z.string().min(1).max(1024),
   partNumber: z.coerce.number().int().min(1).max(10_000),
-  size: z.coerce.number().int().positive().max(multipartPartSize),
+  size: z.coerce.number().int().positive().max(multipartPartSize).optional(),
 });
 
 const multipartCompleteSchema = completeSchema.extend({
@@ -229,7 +229,7 @@ router.post("/multipart/part", async (req, res) => {
     uploadId: req.header("x-multipart-upload-id"),
     objectKey: req.header("x-object-key"),
     partNumber: req.header("x-part-number"),
-    size: req.header("content-length"),
+    size: req.header("content-length") || undefined,
   });
 
   if (!parsed.success || !req.body) {
@@ -244,7 +244,7 @@ router.post("/multipart/part", async (req, res) => {
         UploadId: parsed.data.uploadId,
         PartNumber: parsed.data.partNumber,
         Body: req,
-        ContentLength: parsed.data.size,
+        ...(parsed.data.size ? { ContentLength: parsed.data.size } : {}),
       }),
     );
 
