@@ -232,7 +232,7 @@ router.post("/multipart/part", async (req, res) => {
     size: req.header("content-length") || undefined,
   });
 
-  if (!parsed.success || !req.body) {
+  if (!parsed.success) {
     return res.status(400).json({ error: "Dati parte multipart non validi" });
   }
 
