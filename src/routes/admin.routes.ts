@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth, requireRole } from "../middleware/auth.middleware.js";
+import { requireAuth, requireRoleOrPermission } from "../middleware/auth.middleware.js";
 import adminVideoRoutes from "./admin-video.routes.js";
 import adminCategoryRoutes from "./admin-category.routes.js";
 import adminLiveStreamRoutes from "./admin-live-stream.routes.js";
@@ -16,7 +16,14 @@ const router = Router();
 
 router.use(requireAuth);
 
-router.get("/", requireRole("EDITOR", "ADMIN"), (_req, res) => {
+const canViewContent = requireRoleOrPermission(["EDITOR", "ADMIN"], ["CONTENT_VIEW", "CONTENT_MANAGE"]);
+const canManageContent = requireRoleOrPermission(["EDITOR", "ADMIN"], ["CONTENT_MANAGE"]);
+const canManageCatalog = requireRoleOrPermission(["EDITOR", "ADMIN"], ["CATALOG_MANAGE"]);
+const canManageLive = requireRoleOrPermission(["EDITOR", "ADMIN"], ["LIVE_MANAGE"]);
+const canManageAppearance = requireRoleOrPermission(["EDITOR", "ADMIN"], ["APPEARANCE_MANAGE"]);
+const canManageUsers = requireRoleOrPermission(["ADMIN"], ["USERS_MANAGE"]);
+
+router.get("/", requireRoleOrPermission(["EDITOR", "ADMIN"], ["CONTENT_VIEW", "CONTENT_MANAGE", "CATALOG_MANAGE", "LIVE_MANAGE", "APPEARANCE_MANAGE", "USERS_MANAGE", "SETTINGS_MANAGE"]), (_req, res) => {
   res.json({
     service: "TVMIX Admin API",
     role: res.locals.auth.role,
@@ -25,16 +32,16 @@ router.get("/", requireRole("EDITOR", "ADMIN"), (_req, res) => {
   });
 });
 
-router.use("/videos", requireRole("EDITOR", "ADMIN"), adminVideoRoutes);
-router.use("/uploads", requireRole("EDITOR", "ADMIN"), adminUploadRoutes);
-router.use("/catalog", requireRole("EDITOR", "ADMIN"), adminCatalogRoutes);
-router.use("/appearance", requireRole("EDITOR", "ADMIN"), adminAppearanceRoutes);
-router.use("/appearance/modules", requireRole("EDITOR", "ADMIN"), adminHomeModuleRoutes);
-router.use("/carousel", requireRole("EDITOR", "ADMIN"), adminCarouselRoutes);
-router.use("/frontend-menu", requireRole("EDITOR", "ADMIN"), adminFrontendMenuRoutes);
-router.use("/epg", requireRole("EDITOR", "ADMIN"), adminEpgRoutes);
-router.use("/categories", requireRole("EDITOR", "ADMIN"), adminCategoryRoutes);
-router.use("/live-streams", requireRole("EDITOR", "ADMIN"), adminLiveStreamRoutes);
-router.use("/users", requireRole("ADMIN"), adminUserRoutes);
+router.use("/videos", canViewContent, adminVideoRoutes);
+router.use("/uploads", canManageContent, adminUploadRoutes);
+router.use("/catalog", canManageCatalog, adminCatalogRoutes);
+router.use("/appearance", canManageAppearance, adminAppearanceRoutes);
+router.use("/appearance/modules", canManageAppearance, adminHomeModuleRoutes);
+router.use("/carousel", canManageAppearance, adminCarouselRoutes);
+router.use("/frontend-menu", canManageAppearance, adminFrontendMenuRoutes);
+router.use("/epg", canManageLive, adminEpgRoutes);
+router.use("/categories", canManageCatalog, adminCategoryRoutes);
+router.use("/live-streams", canManageLive, adminLiveStreamRoutes);
+router.use("/users", canManageUsers, adminUserRoutes);
 
 export default router;

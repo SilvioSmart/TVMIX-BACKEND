@@ -1,5 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt, { type JwtPayload } from "jsonwebtoken";
+import type { UserPermission } from "@prisma/client";
+import { prisma } from "../lib/prisma.js";
 
 export type AuthTokenPayload = JwtPayload & {
   email: string;
@@ -50,5 +52,33 @@ export function requireRole(...roles: UserRole[]) {
     }
 
     return next();
+  };
+}
+
+export function requireRoleOrPermission(
+  roles: UserRole[],
+  permissions: UserPermission[],
+) {
+  return async (_req: Request, res: Response, next: NextFunction) => {
+    const auth = res.locals.auth as AuthTokenPayload | undefined;
+
+    if (!auth) {
+      return res.status(401).json({ error: "Autenticazione richiesta" });
+    }
+
+    if (roles.includes(auth.role)) {
+      return next();
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: auth.sub },
+      select: { permissions: true },
+    });
+
+    if (user?.permissions.some((permission) => permissions.includes(permission))) {
+      return next();
+    }
+
+    return res.status(403).json({ error: "Permessi insufficienti" });
   };
 }
