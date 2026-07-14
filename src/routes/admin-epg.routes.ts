@@ -15,6 +15,7 @@ const router = Router();
 
 const epgBaseSchema = z.object({
   liveStreamId: uuidSchema,
+  videoId: uuidSchema.nullable().optional(),
   title: z.string().trim().min(2).max(180),
   description: z.string().trim().max(1000).nullable().optional(),
   startsAt: z.coerce.date(),
@@ -61,7 +62,20 @@ router.get("/", async (req, res) => {
   const [data, total] = await prisma.$transaction([
     prisma.liveEpgItem.findMany({
       where,
-      include: { liveStream: { select: { id: true, name: true, slug: true } } },
+      include: {
+        liveStream: { select: { id: true, name: true, slug: true } },
+        video: {
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            thumbnailUrl: true,
+            hlsUrl: true,
+            duration: true,
+            category: { select: { id: true, name: true, slug: true } },
+          },
+        },
+      },
       orderBy: [{ startsAt: "asc" }],
       skip: (page - 1) * limit,
       take: limit,

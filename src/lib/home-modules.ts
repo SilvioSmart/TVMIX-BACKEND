@@ -86,6 +86,18 @@ export async function resolveModuleEpg(module: {
       endsAt: { gte: now },
       startsAt: { lte: windowEnd },
     },
+    include: {
+      video: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          thumbnailUrl: true,
+          hlsUrl: true,
+          duration: true,
+        },
+      },
+    },
     orderBy: [{ startsAt: "asc" }],
     take: 48,
   });
