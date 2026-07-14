@@ -17,6 +17,7 @@ const liveStreamSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: slugSchema,
   description: z.string().trim().max(2000).nullable().optional(),
+  streamType: z.enum(["LIVE_STREAMING", "PLAYLIST"]).default("LIVE_STREAMING"),
   hlsUrl: z.string().trim().url(),
   status: z.enum(["OFFLINE", "LIVE", "SCHEDULED"]).default("OFFLINE"),
   posterUrl: optionalUrlSchema,

@@ -131,6 +131,7 @@ model LiveStream {
   name        String
   slug        String           @unique
   description String?
+  streamType  LiveStreamType   @default(LIVE_STREAMING)
   hlsUrl      String
   status      LiveStreamStatus @default(OFFLINE)
   posterUrl   String?
@@ -239,6 +240,11 @@ enum LiveStreamStatus {
   OFFLINE
   LIVE
   SCHEDULED
+}
+
+enum LiveStreamType {
+  LIVE_STREAMING
+  PLAYLIST
 }
 
 enum MenuItemPlacement {
