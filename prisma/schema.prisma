@@ -8,15 +8,23 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
-  passwordHash String
-  name         String?
-  role         UserRole @default(USER)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                       String           @id @default(uuid()) @db.Uuid
+  email                    String           @unique
+  passwordHash             String
+  name                     String?
+  role                     UserRole         @default(USER)
+  permissions              UserPermission[] @default([])
+  emailVerifiedAt          DateTime?
+  emailVerificationHash    String?
+  emailVerificationExpires DateTime?
+  passwordResetHash        String?
+  passwordResetExpires     DateTime?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
 
   @@index([createdAt])
+  @@index([emailVerificationHash])
+  @@index([passwordResetHash])
 }
 
 model Video {
@@ -243,6 +251,18 @@ enum UserRole {
   USER
   EDITOR
   ADMIN
+}
+
+enum UserPermission {
+  CONTENT_VIEW
+  CONTENT_MANAGE
+  CATALOG_MANAGE
+  LIVE_MANAGE
+  APPEARANCE_MANAGE
+  USERS_MANAGE
+  SETTINGS_MANAGE
+  HLS_MANAGE
+  VAST_MANAGE
 }
 
 enum VideoProcessingStatus {
