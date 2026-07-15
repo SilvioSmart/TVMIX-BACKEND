@@ -3,7 +3,6 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
-  ListPartsCommand,
   PutObjectCommand,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
@@ -32,20 +31,6 @@ const multipartPartSize = 64 * 1024 * 1024;
 
 function serializeUploadSession<T extends { size: bigint }>(session: T) {
   return { ...session, size: Number(session.size) };
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("timeout")), ms);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 }
 
 const presignSchema = z.object({
@@ -459,63 +444,15 @@ router.post("/multipart/resume", async (req, res) => {
     return res.status(409).json({ error: `Upload non riprendibile: ${session.status}` });
   }
 
-  try {
-    const uploadedParts: Array<{ partNumber: number; etag: string; size?: number }> = [];
-    let PartNumberMarker: string | undefined;
-    do {
-      const result = await withTimeout(
-        r2.send(new ListPartsCommand({
-          Bucket: r2Config.bucket,
-          Key: session.objectKey,
-          UploadId: session.multipartUploadId,
-          PartNumberMarker,
-        })),
-        5000,
-      );
-      for (const part of result.Parts ?? []) {
-        if (part.PartNumber && part.ETag) {
-          uploadedParts.push({
-            partNumber: part.PartNumber,
-            etag: part.ETag,
-            ...(part.Size ? { size: part.Size } : {}),
-          });
-        }
-      }
-      PartNumberMarker = result.NextPartNumberMarker;
-    } while (PartNumberMarker);
-
-    const updated = await prisma.mediaUploadSession.update({
-      where: { id: session.id },
-      data: { uploadedParts },
-    });
-
-    return res.json({
-      data: {
-        ...updated,
-        size: Number(updated.size),
-        uploadId: updated.logicalUploadId,
-        multipartUploadId: updated.multipartUploadId,
-        expiresIn: r2Config.uploadUrlExpiresIn,
-      },
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === "timeout") {
-      return res.json({
-        data: {
-          ...serializeUploadSession(session),
-          uploadId: session.logicalUploadId,
-          multipartUploadId: session.multipartUploadId,
-          expiresIn: r2Config.uploadUrlExpiresIn,
-          r2Check: "timeout",
-        },
-      });
-    }
-    await prisma.mediaUploadSession.update({
-      where: { id: session.id },
-      data: { error: error instanceof Error ? error.message : "Resume failed" },
-    }).catch(() => undefined);
-    return res.status(409).json({ error: "Ripresa upload multipart non riuscita" });
-  }
+  return res.json({
+    data: {
+      ...serializeUploadSession(session),
+      uploadId: session.logicalUploadId,
+      multipartUploadId: session.multipartUploadId,
+      expiresIn: r2Config.uploadUrlExpiresIn,
+      r2Check: "database",
+    },
+  });
 });
 
 router.post("/multipart/abort", async (req, res) => {
