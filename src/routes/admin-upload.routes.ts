@@ -3,6 +3,7 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  ListPartsCommand,
   PutObjectCommand,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
@@ -10,6 +11,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Router } from "express";
 import { z } from "zod";
+import { prisma } from "../lib/prisma.js";
 import {
   r2,
   r2Config,
@@ -27,6 +29,10 @@ const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"]
 const imageContentTypes = slideContentTypes;
 const uploadScopes = ["video", "slide", "thumbnail", "locandina"] as const;
 const multipartPartSize = 64 * 1024 * 1024;
+
+function serializeUploadSession<T extends { size: bigint }>(session: T) {
+  return { ...session, size: Number(session.size) };
+}
 
 const presignSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -64,6 +70,10 @@ const multipartCompleteSchema = completeSchema.extend({
 const multipartAbortSchema = z.object({
   uploadId: z.string().min(1).max(2048),
   objectKey: z.string().min(1).max(1024),
+});
+
+const multipartResumeSchema = z.object({
+  logicalUploadId: z.string().uuid(),
 });
 
 const streamingUploadSchema = z.object({
@@ -194,6 +204,23 @@ router.post("/multipart/create", async (req, res) => {
   const objectKey = r2Key(`originals/${sanitizeR2FileName(fileName)}`);
 
   try {
+    const existing = await prisma.mediaUploadSession.findUnique({
+      where: { logicalUploadId },
+    });
+    if (existing?.status === "IN_PROGRESS") {
+      return res.status(200).json({
+        uploadId: existing.logicalUploadId,
+        multipartUploadId: existing.multipartUploadId,
+        objectKey: existing.objectKey,
+        partSize: existing.partSize,
+        totalParts: existing.totalParts,
+        uploadedParts: existing.uploadedParts,
+        size: Number(existing.size),
+        expiresIn: r2Config.uploadUrlExpiresIn,
+        resumable: true,
+      });
+    }
+
     const created = await r2.send(
       new CreateMultipartUploadCommand({
         Bucket: r2Config.bucket,
@@ -209,6 +236,35 @@ router.post("/multipart/create", async (req, res) => {
     if (!created.UploadId) {
       return res.status(502).json({ error: "R2 non ha restituito un ID multipart valido" });
     }
+
+    await prisma.mediaUploadSession.upsert({
+      where: { logicalUploadId },
+      create: {
+        logicalUploadId,
+        multipartUploadId: created.UploadId,
+        objectKey,
+        fileName,
+        contentType,
+        size: BigInt(size),
+        partSize: multipartPartSize,
+        totalParts: Math.ceil(size / multipartPartSize),
+        createdBy: res.locals.auth?.email,
+      },
+      update: {
+        multipartUploadId: created.UploadId,
+        objectKey,
+        fileName,
+        contentType,
+        size: BigInt(size),
+        partSize: multipartPartSize,
+        totalParts: Math.ceil(size / multipartPartSize),
+        uploadedParts: [],
+        status: "IN_PROGRESS",
+        error: null,
+        completedAt: null,
+        abortedAt: null,
+      },
+    });
 
     return res.status(201).json({
       uploadId: logicalUploadId,
@@ -250,6 +306,31 @@ router.post("/multipart/part", async (req, res) => {
 
     if (!uploaded.ETag) {
       return res.status(502).json({ error: "R2 non ha restituito l'ETag della parte" });
+    }
+
+    const session = await prisma.mediaUploadSession.findFirst({
+      where: {
+        multipartUploadId: parsed.data.uploadId,
+        objectKey: parsed.data.objectKey,
+        status: "IN_PROGRESS",
+      },
+    });
+    if (session) {
+      const current = Array.isArray(session.uploadedParts)
+        ? session.uploadedParts as Array<{ partNumber: number; etag: string; size?: number }>
+        : [];
+      const next = [
+        ...current.filter((part) => part.partNumber !== parsed.data.partNumber),
+        {
+          partNumber: parsed.data.partNumber,
+          etag: uploaded.ETag,
+          ...(parsed.data.size ? { size: parsed.data.size } : {}),
+        },
+      ].sort((a, b) => a.partNumber - b.partNumber);
+      await prisma.mediaUploadSession.update({
+        where: { id: session.id },
+        data: { uploadedParts: next },
+      });
     }
 
     return res.status(201).json({
@@ -298,6 +379,22 @@ router.post("/multipart/complete", async (req, res) => {
       parsed.data.contentType,
     );
 
+    await prisma.mediaUploadSession.updateMany({
+      where: {
+        multipartUploadId: parsed.data.uploadId,
+        objectKey: parsed.data.objectKey,
+      },
+      data: {
+        status: "COMPLETED",
+        uploadedParts: parsed.data.parts.map((part) => ({
+          partNumber: part.partNumber,
+          etag: part.etag,
+        })),
+        error: null,
+        completedAt: new Date(),
+      },
+    });
+
     return res.json({
       status: "uploaded",
       uploadId: parsed.data.uploadId,
@@ -307,7 +404,92 @@ router.post("/multipart/complete", async (req, res) => {
     });
   } catch (error) {
     console.error("Completamento multipart R2 fallito", error);
+    await prisma.mediaUploadSession.updateMany({
+      where: {
+        multipartUploadId: parsed.data.uploadId,
+        objectKey: parsed.data.objectKey,
+      },
+      data: {
+        status: "FAILED",
+        error: error instanceof Error ? error.message : "Complete failed",
+      },
+    }).catch(() => undefined);
     return res.status(409).json({ error: "Completamento upload multipart non riuscito" });
+  }
+});
+
+router.get("/multipart/sessions", async (req, res) => {
+  const query = z.object({
+    status: z.enum(["IN_PROGRESS", "COMPLETED", "ABORTED", "FAILED"]).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(100),
+  }).safeParse(req.query);
+  if (!query.success) return res.status(400).json({ error: "Filtri upload non validi" });
+
+  const data = await prisma.mediaUploadSession.findMany({
+    where: query.data.status ? { status: query.data.status } : undefined,
+    orderBy: { updatedAt: "desc" },
+    take: query.data.limit,
+  });
+  return res.json({ data: data.map(serializeUploadSession) });
+});
+
+router.post("/multipart/resume", async (req, res) => {
+  const parsed = multipartResumeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati ripresa multipart non validi" });
+
+  const session = await prisma.mediaUploadSession.findUnique({
+    where: { logicalUploadId: parsed.data.logicalUploadId },
+  });
+  if (!session) return res.status(404).json({ error: "Sessione upload non trovata" });
+  if (session.status !== "IN_PROGRESS") {
+    return res.status(409).json({ error: `Upload non riprendibile: ${session.status}` });
+  }
+
+  try {
+    const uploadedParts: Array<{ partNumber: number; etag: string; size?: number }> = [];
+    let PartNumberMarker: string | undefined;
+    do {
+      const result = await r2.send(new ListPartsCommand({
+        Bucket: r2Config.bucket,
+        Key: session.objectKey,
+        UploadId: session.multipartUploadId,
+        PartNumberMarker,
+      }));
+      for (const part of result.Parts ?? []) {
+        if (part.PartNumber && part.ETag) {
+          uploadedParts.push({
+            partNumber: part.PartNumber,
+            etag: part.ETag,
+            ...(part.Size ? { size: part.Size } : {}),
+          });
+        }
+      }
+      PartNumberMarker = result.NextPartNumberMarker;
+    } while (PartNumberMarker);
+
+    const updated = await prisma.mediaUploadSession.update({
+      where: { id: session.id },
+      data: { uploadedParts },
+    });
+
+    return res.json({
+      data: {
+        ...updated,
+        size: Number(updated.size),
+        uploadId: updated.logicalUploadId,
+        multipartUploadId: updated.multipartUploadId,
+        expiresIn: r2Config.uploadUrlExpiresIn,
+      },
+    });
+  } catch (error) {
+    await prisma.mediaUploadSession.update({
+      where: { id: session.id },
+      data: {
+        status: "FAILED",
+        error: error instanceof Error ? error.message : "Resume failed",
+      },
+    }).catch(() => undefined);
+    return res.status(409).json({ error: "Ripresa upload multipart non riuscita" });
   }
 });
 
@@ -325,6 +507,16 @@ router.post("/multipart/abort", async (req, res) => {
         UploadId: parsed.data.uploadId,
       }),
     );
+    await prisma.mediaUploadSession.updateMany({
+      where: {
+        multipartUploadId: parsed.data.uploadId,
+        objectKey: parsed.data.objectKey,
+      },
+      data: {
+        status: "ABORTED",
+        abortedAt: new Date(),
+      },
+    });
     return res.status(204).send();
   } catch (error) {
     console.error("Annullamento multipart R2 fallito", error);

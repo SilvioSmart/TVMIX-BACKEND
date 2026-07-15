@@ -9,7 +9,16 @@ import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { r2, r2Config, r2Key, sanitizeR2FileName } from "../lib/r2.js";
+import {
+  deleteR2Objects,
+  deleteR2Prefix,
+  objectKeyFromPublicUrl,
+  r2,
+  r2Config,
+  r2Key,
+  sanitizeR2FileName,
+  uniqueObjectKeys,
+} from "../lib/r2.js";
 import { getTranscodeQueue } from "../lib/transcodeQueue.js";
 import {
   handlePrismaError,
@@ -22,6 +31,37 @@ import {
 } from "../lib/api-validation.js";
 
 const router = Router();
+
+function hlsPrefixFromKey(objectKey: string | null | undefined): string | null {
+  if (!objectKey) return null;
+  const normalized = objectKey.replace(/\/+$/, "");
+  if (normalized.endsWith("/master.m3u8")) {
+    return `${normalized.slice(0, -"master.m3u8".length)}`;
+  }
+  const slash = normalized.lastIndexOf("/");
+  return slash > 0 ? `${normalized.slice(0, slash + 1)}` : null;
+}
+
+async function deleteVideoArchiveFiles(video: {
+  sourceObjectKey: string | null;
+  convertedObjectKey: string | null;
+  hlsUrl: string | null;
+  thumbnailUrl: string | null;
+}) {
+  const hlsKey = video.convertedObjectKey ?? objectKeyFromPublicUrl(video.hlsUrl);
+  const hlsPrefix = hlsPrefixFromKey(hlsKey);
+  const objectKeys = uniqueObjectKeys([
+    video.sourceObjectKey,
+    hlsKey,
+    objectKeyFromPublicUrl(video.thumbnailUrl),
+  ]);
+  const deletedObjects = await deleteR2Objects(objectKeys);
+  const deletedPrefix = hlsPrefix ? await deleteR2Prefix(hlsPrefix) : { deleted: 0, errors: [] };
+  return {
+    deleted: deletedObjects.deleted + deletedPrefix.deleted,
+    errors: [...deletedObjects.errors, ...deletedPrefix.errors],
+  };
+}
 
 function run(command: string, args: string[]) {
   return new Promise<void>((resolve, reject) => {
@@ -270,6 +310,25 @@ router.delete("/:id", async (req, res) => {
   if (!id.success) return sendValidationError(res, id.error);
 
   try {
+    const video = await prisma.video.findUnique({
+      where: { id: id.data },
+      select: {
+        sourceObjectKey: true,
+        convertedObjectKey: true,
+        hlsUrl: true,
+        thumbnailUrl: true,
+      },
+    });
+    if (!video) return res.status(404).json({ error: "Video non trovato" });
+
+    const cleanup = await deleteVideoArchiveFiles(video);
+    if (cleanup.errors.length) {
+      return res.status(409).json({
+        error: "Cancellazione file archivio non completata",
+        details: cleanup.errors,
+      });
+    }
+
     await prisma.video.delete({ where: { id: id.data } });
     return res.status(204).send();
   } catch (error) {

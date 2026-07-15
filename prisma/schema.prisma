@@ -63,6 +63,29 @@ model Video {
   @@index([episodeCode])
 }
 
+model MediaUploadSession {
+  id                String            @id @default(uuid()) @db.Uuid
+  logicalUploadId   String            @unique @db.Uuid
+  multipartUploadId String
+  objectKey         String
+  fileName          String
+  contentType       String
+  size              BigInt
+  partSize          Int
+  totalParts        Int
+  uploadedParts     Json              @default("[]")
+  status            MediaUploadStatus @default(IN_PROGRESS)
+  error             String?
+  createdBy         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  completedAt       DateTime?
+  abortedAt         DateTime?
+
+  @@index([status, updatedAt])
+  @@index([objectKey])
+}
+
 model HomepageCarouselSlide {
   id          String   @id @default(uuid()) @db.Uuid
   eyebrow     String?
@@ -249,6 +272,13 @@ enum LiveStreamStatus {
 enum LiveStreamType {
   LIVE_STREAMING
   PLAYLIST
+}
+
+enum MediaUploadStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABORTED
+  FAILED
 }
 
 enum MenuItemPlacement {

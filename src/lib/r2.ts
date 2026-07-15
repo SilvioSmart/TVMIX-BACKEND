@@ -1,6 +1,8 @@
 import {
+  DeleteObjectsCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   S3Client,
 } from "@aws-sdk/client-s3";
 
@@ -104,4 +106,62 @@ export async function verifyR2Object(
   if (object.ContentType !== expectedContentType) {
     throw new Error("Il tipo del file caricato non corrisponde");
   }
+}
+
+export function objectKeyFromPublicUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const publicPrefix = `${r2Config.publicUrl}/`;
+  if (!url.startsWith(publicPrefix)) return null;
+  return decodeURIComponent(url.slice(publicPrefix.length));
+}
+
+export function uniqueObjectKeys(keys: Array<string | null | undefined>): string[] {
+  return [...new Set(keys.filter((key): key is string => Boolean(key)))];
+}
+
+export async function deleteR2Objects(keys: string[]): Promise<{ deleted: number; errors: string[] }> {
+  const uniqueKeys = uniqueObjectKeys(keys);
+  const errors: string[] = [];
+  let deleted = 0;
+
+  for (let index = 0; index < uniqueKeys.length; index += 1000) {
+    const batch = uniqueKeys.slice(index, index + 1000);
+    const result = await r2.send(new DeleteObjectsCommand({
+      Bucket: r2Config.bucket,
+      Delete: {
+        Quiet: true,
+        Objects: batch.map((Key) => ({ Key })),
+      },
+    }));
+    deleted += batch.length - (result.Errors?.length ?? 0);
+    for (const error of result.Errors ?? []) {
+      errors.push(`${error.Key ?? "unknown"}: ${error.Code ?? "DeleteError"}`);
+    }
+  }
+
+  return { deleted, errors };
+}
+
+export async function listR2KeysByPrefix(prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let ContinuationToken: string | undefined;
+
+  do {
+    const result = await r2.send(new ListObjectsV2Command({
+      Bucket: r2Config.bucket,
+      Prefix: prefix,
+      ContinuationToken,
+    }));
+    for (const item of result.Contents ?? []) {
+      if (item.Key) keys.push(item.Key);
+    }
+    ContinuationToken = result.NextContinuationToken;
+  } while (ContinuationToken);
+
+  return keys;
+}
+
+export async function deleteR2Prefix(prefix: string): Promise<{ deleted: number; errors: string[] }> {
+  const keys = await listR2KeysByPrefix(prefix);
+  return deleteR2Objects(keys);
 }
