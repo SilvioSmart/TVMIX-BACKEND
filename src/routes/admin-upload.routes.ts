@@ -34,6 +34,20 @@ function serializeUploadSession<T extends { size: bigint }>(session: T) {
   return { ...session, size: Number(session.size) };
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("timeout")), ms);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 const presignSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   contentType: z.enum(contentTypes),
@@ -449,12 +463,15 @@ router.post("/multipart/resume", async (req, res) => {
     const uploadedParts: Array<{ partNumber: number; etag: string; size?: number }> = [];
     let PartNumberMarker: string | undefined;
     do {
-      const result = await r2.send(new ListPartsCommand({
-        Bucket: r2Config.bucket,
-        Key: session.objectKey,
-        UploadId: session.multipartUploadId,
-        PartNumberMarker,
-      }));
+      const result = await withTimeout(
+        r2.send(new ListPartsCommand({
+          Bucket: r2Config.bucket,
+          Key: session.objectKey,
+          UploadId: session.multipartUploadId,
+          PartNumberMarker,
+        })),
+        5000,
+      );
       for (const part of result.Parts ?? []) {
         if (part.PartNumber && part.ETag) {
           uploadedParts.push({
@@ -482,12 +499,20 @@ router.post("/multipart/resume", async (req, res) => {
       },
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "timeout") {
+      return res.json({
+        data: {
+          ...serializeUploadSession(session),
+          uploadId: session.logicalUploadId,
+          multipartUploadId: session.multipartUploadId,
+          expiresIn: r2Config.uploadUrlExpiresIn,
+          r2Check: "timeout",
+        },
+      });
+    }
     await prisma.mediaUploadSession.update({
       where: { id: session.id },
-      data: {
-        status: "FAILED",
-        error: error instanceof Error ? error.message : "Resume failed",
-      },
+      data: { error: error instanceof Error ? error.message : "Resume failed" },
     }).catch(() => undefined);
     return res.status(409).json({ error: "Ripresa upload multipart non riuscita" });
   }
