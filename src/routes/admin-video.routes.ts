@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { Router } from "express";
+import { Router, type Response } from "express";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
@@ -91,11 +91,9 @@ function normalizeSlug(value: string) {
   return value.trim().replace(/^#+/, "");
 }
 
-function twoDigitUnitsTens(value: number) {
+function twoDigitNumber(value: number) {
   const normalized = Math.abs(value) % 100;
-  const units = normalized % 10;
-  const tens = Math.floor(normalized / 10);
-  return `${units}${tens}`;
+  return String(normalized).padStart(2, "0");
 }
 
 async function createEpisodeCode(seasonId: string | null | undefined, episodeNumber: number | null | undefined) {
@@ -107,7 +105,37 @@ async function createEpisodeCode(seasonId: string | null | undefined, episodeNum
   if (!season) return null;
 
   const programId = season.programId.toUpperCase();
-  return `${programId[0] ?? "X"}${programId.at(-1) ?? "X"}${twoDigitUnitsTens(season.number)}${twoDigitUnitsTens(episodeNumber)}`;
+  return `${programId[0] ?? "X"}${programId.at(-1) ?? "X"}${twoDigitNumber(season.number)}${twoDigitNumber(episodeNumber)}`;
+}
+
+async function validateEpisodeAssignment(
+  res: Response,
+  seasonId: string | null | undefined,
+  episodeNumber: number | null | undefined,
+  excludeVideoId?: string,
+) {
+  if (!seasonId && episodeNumber) {
+    res.status(409).json({ error: "Se indichi il numero puntata devi selezionare anche la stagione/serie" });
+    return false;
+  }
+  if (!seasonId || !episodeNumber) return true;
+
+  const duplicate = await prisma.video.findFirst({
+    where: {
+      seasonId,
+      episodeNumber,
+      ...(excludeVideoId ? { id: { not: excludeVideoId } } : {}),
+    },
+    select: { id: true, title: true, episodeCode: true },
+  });
+  if (duplicate) {
+    res.status(409).json({
+      error: `Puntata già presente in catalogo: ${duplicate.title}${duplicate.episodeCode ? ` (${duplicate.episodeCode})` : ""}`,
+    });
+    return false;
+  }
+
+  return true;
 }
 
 const videoFields = z.object({
@@ -208,6 +236,14 @@ router.post("/", async (req, res) => {
       return res.status(409).json({ error: "Un video senza HLS non può essere pubblicato" });
     }
 
+    if (!(await validateEpisodeAssignment(res, input.seasonId, input.episodeNumber))) return;
+    const generatedEpisodeCode = await createEpisodeCode(input.seasonId, input.episodeNumber);
+    if (input.episodeCode && generatedEpisodeCode && input.episodeCode !== generatedEpisodeCode) {
+      return res.status(409).json({
+        error: `ID episodio non coerente: per questa stagione/puntata deve essere ${generatedEpisodeCode}`,
+      });
+    }
+
     const video = await prisma.video.create({
       data: {
         ...input,
@@ -221,8 +257,7 @@ router.post("/", async (req, res) => {
               )?.program.categoryId ?? input.categoryId,
             }
           : {}),
-        episodeCode:
-          input.episodeCode ?? (await createEpisodeCode(input.seasonId, input.episodeNumber)),
+        episodeCode: generatedEpisodeCode ?? input.episodeCode,
         publishedAt:
           input.published && !input.publishedAt ? new Date() : input.publishedAt,
       } as Prisma.VideoUncheckedCreateInput,
@@ -243,16 +278,26 @@ router.patch("/:id", async (req, res) => {
 
   try {
     const input = parsed.data;
+    const current = await prisma.video.findUnique({
+      where: { id: id.data },
+      select: { hlsUrl: true, seasonId: true, episodeNumber: true },
+    });
+    if (!current) return res.status(404).json({ error: "Video non trovato" });
     if (input.published === true) {
-      const current = await prisma.video.findUnique({
-        where: { id: id.data },
-        select: { hlsUrl: true },
-      });
-      if (!current) return res.status(404).json({ error: "Video non trovato" });
       if (!(input.hlsUrl ?? current.hlsUrl)) {
         return res.status(409).json({ error: "Un video senza HLS non può essere pubblicato" });
       }
     }
+    const targetSeasonId = input.seasonId !== undefined ? input.seasonId : current.seasonId;
+    const targetEpisodeNumber = input.episodeNumber !== undefined ? input.episodeNumber : current.episodeNumber;
+    if (!(await validateEpisodeAssignment(res, targetSeasonId, targetEpisodeNumber, id.data))) return;
+    const generatedEpisodeCode = await createEpisodeCode(targetSeasonId, targetEpisodeNumber);
+    if (input.episodeCode && generatedEpisodeCode && input.episodeCode !== generatedEpisodeCode) {
+      return res.status(409).json({
+        error: `ID episodio non coerente: per questa stagione/puntata deve essere ${generatedEpisodeCode}`,
+      });
+    }
+
     const video = await prisma.video.update({
       where: { id: id.data },
       data: {
@@ -269,24 +314,7 @@ router.patch("/:id", async (req, res) => {
           : {}),
         ...(input.seasonId !== undefined || input.episodeNumber !== undefined
           ? {
-              episodeCode:
-                input.episodeCode ??
-                (await createEpisodeCode(
-                  input.seasonId ??
-                    (
-                      await prisma.video.findUnique({
-                        where: { id: id.data },
-                        select: { seasonId: true },
-                      })
-                    )?.seasonId,
-                  input.episodeNumber ??
-                    (
-                      await prisma.video.findUnique({
-                        where: { id: id.data },
-                        select: { episodeNumber: true },
-                      })
-                    )?.episodeNumber,
-                )),
+              episodeCode: generatedEpisodeCode ?? input.episodeCode ?? null,
             }
           : {}),
         ...(input.published === true && input.publishedAt === undefined
