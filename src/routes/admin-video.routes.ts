@@ -175,11 +175,13 @@ router.get("/", async (req, res) => {
   const query = paginationSchema.extend({
     categoryId: uuidSchema.optional(),
     published: z.enum(["true", "false"]).optional(),
+    processingStatus: z.enum(["PENDING", "UPLOADING", "UPLOADED", "QUEUED", "PROCESSING", "READY", "FAILED"]).optional(),
+    source: z.enum(["originals"]).optional(),
   }).safeParse(req.query);
 
   if (!query.success) return sendValidationError(res, query.error, "Filtri non validi");
 
-  const { page, limit, search, categoryId, published } = query.data;
+  const { page, limit, search, categoryId, published, processingStatus, source } = query.data;
   const where = {
     ...(search
       ? {
@@ -191,6 +193,8 @@ router.get("/", async (req, res) => {
       : {}),
     ...(categoryId ? { categoryId } : {}),
     ...(published ? { published: published === "true" } : {}),
+    ...(processingStatus ? { processingStatus } : {}),
+    ...(source === "originals" ? { sourceObjectKey: { not: null } } : {}),
   };
 
   const [data, total] = await prisma.$transaction([
@@ -419,6 +423,32 @@ router.post("/:id/transcode", async (req, res) => {
       videoId: video.id,
       sourcePath,
       processingStatus: updated.processingStatus,
+    },
+  });
+});
+
+router.get("/:id/transcode-status", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  if (!id.success) return sendValidationError(res, id.error);
+
+  const video = await prisma.video.findUnique({
+    where: { id: id.data },
+    select: { id: true, processingStatus: true, processingError: true, duration: true },
+  });
+  if (!video) return res.status(404).json({ error: "Video non trovato" });
+
+  const queue = getTranscodeQueue();
+  const job = await queue.getJob(`video-${video.id}`);
+  const state = job ? await job.getState() : null;
+  return res.json({
+    data: {
+      videoId: video.id,
+      processingStatus: video.processingStatus,
+      processingError: video.processingError,
+      duration: video.duration,
+      jobId: job?.id ?? null,
+      jobState: state,
+      progress: job?.progress ?? null,
     },
   });
 });

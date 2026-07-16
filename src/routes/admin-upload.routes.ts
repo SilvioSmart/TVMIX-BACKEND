@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import path from "node:path";
+import { spawn } from "node:child_process";
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -24,6 +28,11 @@ import {
 
 const router = Router();
 const contentTypes = ["video/mp4", "video/quicktime", "video/x-matroska"] as const;
+const extensionContentType: Record<string, typeof contentTypes[number]> = {
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".mkv": "video/x-matroska",
+};
 const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 const imageContentTypes = slideContentTypes;
 const uploadScopes = ["video", "slide", "thumbnail", "locandina"] as const;
@@ -32,6 +41,131 @@ const multipartPartSize = 64 * 1024 * 1024;
 function serializeUploadSession<T extends { size: bigint }>(session: T) {
   return { ...session, size: Number(session.size) };
 }
+
+function slugify(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 160) || `media-${Date.now()}`;
+}
+
+async function uniqueVideoSlug(base: string): Promise<string> {
+  const normalized = slugify(base);
+  let candidate = normalized;
+  let suffix = 2;
+  while (await prisma.video.findUnique({ where: { slug: candidate }, select: { id: true } })) {
+    candidate = `${normalized}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function loadingCategoryId(): Promise<string> {
+  const category = await prisma.category.upsert({
+    where: { slug: "loading" },
+    create: {
+      name: "Loading",
+      slug: "loading",
+      description: "Area tecnica per media caricati in archivio e non ancora catalogati",
+    },
+    update: {},
+    select: { id: true },
+  });
+  return category.id;
+}
+
+function remoteImportRoot() {
+  return path.resolve(process.env.MEDIA_IMPORT_ROOT ?? "/srv/tvmix/imports");
+}
+
+function safeRemotePath(input: string) {
+  const root = remoteImportRoot();
+  const resolved = path.resolve(root, input.replace(/^[/\\]+/, ""));
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Percorso remoto fuori dalla cartella import consentita");
+  }
+  return resolved;
+}
+
+function mediaContentTypeForFile(fileName: string) {
+  return extensionContentType[path.extname(fileName).toLowerCase()] ?? null;
+}
+
+function ffprobe(filePath: string): Promise<{
+  duration?: number;
+  videoQuality?: string;
+  mediaFormat?: string;
+  audioTracks?: Array<{ codec?: string; channels?: number; layout?: string }>;
+  fps?: number;
+}> {
+  const ffprobePath = process.env.FFPROBE_PATH ?? "ffprobe";
+  return new Promise((resolve) => {
+    const child = spawn(ffprobePath, [
+      "-v", "error",
+      "-print_format", "json",
+      "-show_format",
+      "-show_streams",
+      filePath,
+    ]);
+    let stdout = "";
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+    child.on("error", () => resolve({ mediaFormat: path.extname(filePath).slice(1).toUpperCase() }));
+    child.on("close", () => {
+      try {
+        const payload = JSON.parse(stdout) as {
+          format?: { duration?: string; format_name?: string };
+          streams?: Array<{
+            codec_type?: string;
+            codec_name?: string;
+            width?: number;
+            height?: number;
+            r_frame_rate?: string;
+            channels?: number;
+            channel_layout?: string;
+          }>;
+        };
+        const video = payload.streams?.find((stream) => stream.codec_type === "video");
+        const audio = payload.streams?.filter((stream) => stream.codec_type === "audio") ?? [];
+        const [fpsNum, fpsDen] = (video?.r_frame_rate ?? "").split("/").map(Number);
+        resolve({
+          duration: payload.format?.duration ? Math.round(Number(payload.format.duration)) : undefined,
+          videoQuality: video?.width && video.height ? `${video.width}x${video.height}` : undefined,
+          mediaFormat: payload.format?.format_name ?? path.extname(filePath).slice(1).toUpperCase(),
+          fps: fpsNum && fpsDen ? Math.round((fpsNum / fpsDen) * 100) / 100 : undefined,
+          audioTracks: audio.map((track) => ({
+            codec: track.codec_name,
+            channels: track.channels,
+            layout: track.channel_layout,
+          })),
+        });
+      } catch {
+        resolve({ mediaFormat: path.extname(filePath).slice(1).toUpperCase() });
+      }
+    });
+  });
+}
+
+const registerOriginalSchema = z.object({
+  objectKey: z.string().min(1).max(1024),
+  fileName: z.string().trim().min(1).max(255),
+  contentType: z.enum(contentTypes),
+  size: z.number().int().positive(),
+  duration: z.number().int().positive().nullable().optional(),
+  mediaFormat: z.string().trim().max(80).nullable().optional(),
+  videoQuality: z.string().trim().max(80).nullable().optional(),
+  audioTracks: z.unknown().nullable().optional(),
+});
+
+const remoteListSchema = z.object({
+  path: z.string().trim().max(500).default(""),
+});
+
+const remoteImportSchema = z.object({
+  path: z.string().trim().min(1).max(1000),
+});
 
 const presignSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -112,6 +246,150 @@ router.get("/status", async (_req, res) => {
     });
   } catch {
     return res.status(503).json({ error: "Connessione Cloudflare R2 non disponibile" });
+  }
+});
+
+router.get("/remote-files", async (req, res) => {
+  const parsed = remoteListSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "Percorso remoto non valido" });
+
+  try {
+    const directory = safeRemotePath(parsed.data.path);
+    const entries = await readdir(directory, { withFileTypes: true });
+    const data = await Promise.all(entries.map(async (entry) => {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(remoteImportRoot(), absolute).split(path.sep).join("/");
+      const itemStat = await stat(absolute);
+      return {
+        name: entry.name,
+        path: relative,
+        type: entry.isDirectory() ? "directory" : "file",
+        size: entry.isFile() ? itemStat.size : null,
+        supported: entry.isFile() ? Boolean(mediaContentTypeForFile(entry.name)) : true,
+        updatedAt: itemStat.mtime.toISOString(),
+      };
+    }));
+    return res.json({
+      root: remoteImportRoot(),
+      path: path.relative(remoteImportRoot(), directory).split(path.sep).join("/"),
+      data: data.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1),
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Lettura cartella remota non riuscita" });
+  }
+});
+
+router.post("/register-original", async (req, res) => {
+  const parsed = registerOriginalSchema.strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati media originale non validi", details: parsed.error.flatten().fieldErrors });
+  if (!isOriginalObjectKey(parsed.data.objectKey)) return res.status(400).json({ error: "Chiave oggetto R2 non valida" });
+
+  try {
+    await verifyOriginalObject(parsed.data.objectKey, parsed.data.size, parsed.data.contentType);
+    const duplicate = await prisma.video.findFirst({
+      where: {
+        OR: [
+          { sourceObjectKey: parsed.data.objectKey },
+          { originalFileName: parsed.data.fileName, processingStatus: { in: ["UPLOADED", "QUEUED", "PROCESSING", "READY"] } },
+        ],
+      },
+      select: { id: true, title: true, sourceObjectKey: true },
+    });
+    if (duplicate) {
+      return res.status(409).json({ error: `File già presente in archivio: ${duplicate.title}`, data: duplicate });
+    }
+
+    const title = path.parse(parsed.data.fileName).name;
+    const video = await prisma.video.create({
+      data: {
+        title,
+        slug: await uniqueVideoSlug(title),
+        categoryId: await loadingCategoryId(),
+        sourceObjectKey: parsed.data.objectKey,
+        originalFileName: parsed.data.fileName,
+        processingStatus: "UPLOADED",
+        processingError: null,
+        duration: parsed.data.duration ?? null,
+        mediaFormat: parsed.data.mediaFormat ?? parsed.data.contentType,
+        videoQuality: parsed.data.videoQuality ?? null,
+        audioTracks: parsed.data.audioTracks ?? undefined,
+        published: false,
+      },
+      include: { category: true, season: { include: { program: true } } },
+    });
+    return res.status(201).json({ data: video });
+  } catch (error) {
+    console.error("Registrazione originale fallita", error);
+    return res.status(409).json({ error: error instanceof Error ? error.message : "Registrazione media non riuscita" });
+  }
+});
+
+router.post("/remote-import", async (req, res) => {
+  const parsed = remoteImportSchema.strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati import remoto non validi" });
+
+  try {
+    const sourcePath = safeRemotePath(parsed.data.path);
+    const sourceStat = await stat(sourcePath);
+    if (!sourceStat.isFile()) return res.status(400).json({ error: "Il percorso remoto non è un file" });
+    const contentType = mediaContentTypeForFile(sourcePath);
+    if (!contentType) return res.status(400).json({ error: "Sono ammessi solo file MP4, MOV o MKV" });
+
+    const fileName = path.basename(sourcePath);
+    const safeFileName = sanitizeR2FileName(fileName);
+    const objectKey = r2Key(`originals/${safeFileName}`);
+    const duplicate = await prisma.video.findFirst({
+      where: {
+        OR: [
+          { sourceObjectKey: objectKey },
+          { originalFileName: fileName, processingStatus: { in: ["UPLOADED", "QUEUED", "PROCESSING", "READY"] } },
+        ],
+      },
+      select: { id: true, title: true, sourceObjectKey: true },
+    });
+    if (duplicate) return res.status(409).json({ error: `File già presente in archivio: ${duplicate.title}`, data: duplicate });
+
+    const metadata = await ffprobe(sourcePath);
+    const upload = new Upload({
+      client: r2,
+      params: {
+        Bucket: r2Config.bucket,
+        Key: objectKey,
+        Body: createReadStream(sourcePath),
+        ContentType: contentType,
+        Metadata: {
+          "original-name": encodeURIComponent(fileName),
+          "upload-id": randomUUID(),
+        },
+      },
+      queueSize: 4,
+      partSize: 64 * 1024 * 1024,
+      leavePartsOnError: true,
+    });
+    await upload.done();
+    await verifyOriginalObject(objectKey, sourceStat.size, contentType);
+
+    const title = path.parse(fileName).name;
+    const video = await prisma.video.create({
+      data: {
+        title,
+        slug: await uniqueVideoSlug(title),
+        categoryId: await loadingCategoryId(),
+        sourceObjectKey: objectKey,
+        originalFileName: fileName,
+        processingStatus: "UPLOADED",
+        duration: metadata.duration ?? null,
+        mediaFormat: metadata.mediaFormat ?? contentType,
+        videoQuality: metadata.videoQuality ? `${metadata.videoQuality}${metadata.fps ? ` · ${metadata.fps} fps` : ""}` : null,
+        audioTracks: metadata.audioTracks ?? undefined,
+        published: false,
+      },
+      include: { category: true, season: { include: { program: true } } },
+    });
+    return res.status(201).json({ data: video, metadata, objectKey });
+  } catch (error) {
+    console.error("Import remoto originale fallito", error);
+    return res.status(409).json({ error: error instanceof Error ? error.message : "Import remoto non riuscito" });
   }
 });
 
