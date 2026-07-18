@@ -11,6 +11,7 @@ import adminFrontendMenuRoutes from "./admin-frontend-menu.routes.js";
 import adminCarouselRoutes from "./admin-carousel.routes.js";
 import adminHomeModuleRoutes from "./admin-home-module.routes.js";
 import adminEpgRoutes from "./admin-epg.routes.js";
+import adminRouteConfigRoutes from "./admin-route-config.routes.js";
 
 const router = Router();
 
@@ -34,6 +35,7 @@ router.get("/", requireRoleOrPermission(["EDITOR", "ADMIN"], ["CONTENT_VIEW", "C
 
 router.use("/videos", canViewContent, adminVideoRoutes);
 router.use("/uploads", canManageContent, adminUploadRoutes);
+router.use("/route-configs", canManageContent, adminRouteConfigRoutes);
 router.use("/catalog", canManageCatalog, adminCatalogRoutes);
 router.use("/appearance", canManageAppearance, adminAppearanceRoutes);
 router.use("/appearance/modules", canManageAppearance, adminHomeModuleRoutes);
