@@ -91,9 +91,9 @@ function normalizeSlug(value: string) {
   return value.trim().replace(/^#+/, "");
 }
 
-function twoDigitNumber(value: number) {
+function twoDigitUnitsTens(value: number) {
   const normalized = Math.abs(value) % 100;
-  return String(normalized).padStart(2, "0");
+  return `${normalized % 10}${Math.floor(normalized / 10)}`;
 }
 
 async function createEpisodeCode(seasonId: string | null | undefined, episodeNumber: number | null | undefined) {
@@ -105,7 +105,7 @@ async function createEpisodeCode(seasonId: string | null | undefined, episodeNum
   if (!season) return null;
 
   const programId = season.programId.toUpperCase();
-  return `${programId[0] ?? "X"}${programId.at(-1) ?? "X"}${twoDigitNumber(season.number)}${twoDigitNumber(episodeNumber)}`;
+  return `${programId[0] ?? "X"}${programId.at(-1) ?? "X"}${twoDigitUnitsTens(season.number)}${twoDigitUnitsTens(episodeNumber)}`;
 }
 
 async function validateEpisodeAssignment(
