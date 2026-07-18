@@ -95,6 +95,7 @@ model RouteConfig {
   port        Int?
   username    String?
   authMode    String?
+  passwordSecret String?
   remotePath  String?
   importPath  String
   enabled     Boolean  @default(true)
