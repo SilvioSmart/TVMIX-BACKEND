@@ -141,6 +141,7 @@ async function validateEpisodeAssignment(
 const videoFields = z.object({
   title: z.string().trim().min(2).max(200),
   slug: slugSchema.or(z.string().trim().regex(/^#[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug non valido")).transform(normalizeSlug),
+  shortDescription: z.string().trim().max(500).nullable().optional(),
   description: z.string().trim().max(5000).nullable().optional(),
   thumbnailUrl: optionalUrlSchema,
   hlsUrl: optionalUrlSchema,

@@ -31,6 +31,7 @@ model Video {
   id               String                @id @default(uuid()) @db.Uuid
   title            String
   slug             String                @unique
+  shortDescription String?
   description      String?
   thumbnailUrl String?
   hlsUrl           String?
