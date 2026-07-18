@@ -188,6 +188,8 @@ router.get("/", async (req, res) => {
           OR: [
             { title: { contains: search, mode: "insensitive" as const } },
             { slug: { contains: search, mode: "insensitive" as const } },
+            { originalFileName: { contains: search, mode: "insensitive" as const } },
+            { sourceObjectKey: { contains: search, mode: "insensitive" as const } },
           ],
         }
       : {}),
