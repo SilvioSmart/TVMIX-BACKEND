@@ -36,6 +36,7 @@ model Video {
   hlsUrl           String?
   sourceObjectKey  String?
   originalFileName String?
+  uploadedBy       String?
   processingStatus VideoProcessingStatus @default(PENDING)
   processingError  String?
   duration         Int?

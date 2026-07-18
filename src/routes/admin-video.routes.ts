@@ -339,7 +339,11 @@ router.patch("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   const id = uuidSchema.safeParse(req.params.id);
+  const options = z.object({
+    deleteFiles: z.enum(["true", "false"]).default("true"),
+  }).safeParse(req.query);
   if (!id.success) return sendValidationError(res, id.error);
+  if (!options.success) return sendValidationError(res, options.error, "Opzioni eliminazione non valide");
 
   try {
     const video = await prisma.video.findUnique({
@@ -353,12 +357,14 @@ router.delete("/:id", async (req, res) => {
     });
     if (!video) return res.status(404).json({ error: "Video non trovato" });
 
-    const cleanup = await deleteVideoArchiveFiles(video);
-    if (cleanup.errors.length) {
-      return res.status(409).json({
-        error: "Cancellazione file archivio non completata",
-        details: cleanup.errors,
-      });
+    if (options.data.deleteFiles === "true") {
+      const cleanup = await deleteVideoArchiveFiles(video);
+      if (cleanup.errors.length) {
+        return res.status(409).json({
+          error: "Cancellazione file archivio non completata",
+          details: cleanup.errors,
+        });
+      }
     }
 
     await prisma.video.delete({ where: { id: id.data } });
