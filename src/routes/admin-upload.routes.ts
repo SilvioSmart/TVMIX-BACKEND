@@ -15,6 +15,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { currentUserDisplayName } from "../lib/auth-display.js";
 import {
   r2,
   r2Config,
@@ -346,12 +347,13 @@ router.post("/register-original", async (req, res) => {
       return res.status(409).json({ error: `File già presente in archivio: ${duplicate.title}`, data: duplicate });
     }
 
+    const uploadedBy = await currentUserDisplayName(res);
     const video = await registerCompletedOriginal({
       objectKey: parsed.data.objectKey,
       fileName: parsed.data.fileName,
       contentType: parsed.data.contentType,
       size: parsed.data.size,
-      uploadedBy: res.locals.auth?.email ?? null,
+      uploadedBy,
     });
     const updated = await prisma.video.update({
       where: { id: video.id },
@@ -415,6 +417,7 @@ router.post("/remote-import", async (req, res) => {
     await upload.done();
     await verifyOriginalObject(objectKey, sourceStat.size, contentType);
 
+    const uploadedBy = await currentUserDisplayName(res);
     const title = path.parse(fileName).name;
     const video = await prisma.video.create({
       data: {
@@ -423,7 +426,7 @@ router.post("/remote-import", async (req, res) => {
         categoryId: await loadingCategoryId(),
         sourceObjectKey: objectKey,
         originalFileName: fileName,
-        uploadedBy: res.locals.auth?.email ?? null,
+        uploadedBy,
         processingStatus: "UPLOADED",
         duration: metadata.duration ?? null,
         mediaFormat: metadata.mediaFormat ?? contentType,
@@ -572,7 +575,7 @@ router.post("/multipart/create", async (req, res) => {
         size: BigInt(size),
         partSize: multipartPartSize,
         totalParts: Math.ceil(size / multipartPartSize),
-        createdBy: res.locals.auth?.email,
+        createdBy: await currentUserDisplayName(res),
       },
       update: {
         multipartUploadId: created.UploadId,
@@ -730,7 +733,7 @@ router.post("/multipart/complete", async (req, res) => {
       fileName: parsed.data.fileName,
       contentType: parsed.data.contentType,
       size: parsed.data.size,
-      uploadedBy: session?.createdBy ?? res.locals.auth?.email ?? null,
+      uploadedBy: session?.createdBy ?? await currentUserDisplayName(res),
     });
 
     return res.json({

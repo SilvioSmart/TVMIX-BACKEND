@@ -8,6 +8,7 @@ import { Client as FtpClient } from "basic-ftp";
 import { z } from "zod";
 import type { RouteConfig as RouteConfigRecord } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { currentUserDisplayName } from "../lib/auth-display.js";
 import { handlePrismaError, sendValidationError, uuidSchema } from "../lib/api-validation.js";
 import { r2, r2Config, r2Key, sanitizeR2FileName, verifyOriginalObject } from "../lib/r2.js";
 import { mediaContentTypeForFile, registerCompletedOriginal } from "../lib/loading-media.js";
@@ -316,9 +317,10 @@ router.post("/:id/import", async (req, res) => {
   try {
     const route = await prisma.routeConfig.findUniqueOrThrow({ where: { id: id.data } });
     if (!route.enabled) return res.status(400).json({ error: "Rotta disattivata" });
+    const uploadedBy = await currentUserDisplayName(res);
     const data = route.protocol === "FTP"
-      ? await importFtpRouteFile(route, parsed.data.path, res.locals.auth?.email ?? null)
-      : await importLocalRouteFile(route, parsed.data.path, res.locals.auth?.email ?? null);
+      ? await importFtpRouteFile(route, parsed.data.path, uploadedBy)
+      : await importLocalRouteFile(route, parsed.data.path, uploadedBy);
     return res.status(201).json({ data });
   } catch (error) {
     console.error("Import da rotta fallito", error);
