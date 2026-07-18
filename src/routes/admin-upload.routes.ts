@@ -77,6 +77,46 @@ async function loadingCategoryId(): Promise<string> {
   return category.id;
 }
 
+async function registerCompletedOriginal(input: {
+  logicalUploadId?: string;
+  objectKey: string;
+  fileName: string;
+  contentType: typeof contentTypes[number];
+  size?: number;
+  uploadedBy?: string | null;
+}) {
+  const existingBySource = await prisma.video.findFirst({
+    where: { sourceObjectKey: input.objectKey },
+    include: { category: true, season: { include: { program: true } } },
+  });
+  if (existingBySource) return existingBySource;
+
+  if (input.logicalUploadId) {
+    const existingById = await prisma.video.findUnique({
+      where: { id: input.logicalUploadId },
+      include: { category: true, season: { include: { program: true } } },
+    }).catch(() => null);
+    if (existingById) return existingById;
+  }
+
+  const title = path.parse(input.fileName).name;
+  return prisma.video.create({
+    data: {
+      title,
+      slug: await uniqueVideoSlug(title),
+      categoryId: await loadingCategoryId(),
+      sourceObjectKey: input.objectKey,
+      originalFileName: input.fileName,
+      uploadedBy: input.uploadedBy ?? null,
+      processingStatus: "UPLOADED",
+      processingError: null,
+      mediaFormat: input.contentType,
+      published: false,
+    },
+    include: { category: true, season: { include: { program: true } } },
+  });
+}
+
 function remoteImportRoot() {
   return path.resolve(process.env.MEDIA_IMPORT_ROOT ?? "/srv/tvmix/imports");
 }
@@ -296,29 +336,34 @@ router.post("/register-original", async (req, res) => {
       select: { id: true, title: true, sourceObjectKey: true },
     });
     if (duplicate) {
+      if (duplicate.sourceObjectKey === parsed.data.objectKey) {
+        const existing = await prisma.video.findUnique({
+          where: { id: duplicate.id },
+          include: { category: true, season: { include: { program: true } } },
+        });
+        return res.status(200).json({ data: existing });
+      }
       return res.status(409).json({ error: `File già presente in archivio: ${duplicate.title}`, data: duplicate });
     }
 
-    const title = path.parse(parsed.data.fileName).name;
-    const video = await prisma.video.create({
+    const video = await registerCompletedOriginal({
+      objectKey: parsed.data.objectKey,
+      fileName: parsed.data.fileName,
+      contentType: parsed.data.contentType,
+      size: parsed.data.size,
+      uploadedBy: res.locals.auth?.email ?? null,
+    });
+    const updated = await prisma.video.update({
+      where: { id: video.id },
       data: {
-        title,
-        slug: await uniqueVideoSlug(title),
-        categoryId: await loadingCategoryId(),
-        sourceObjectKey: parsed.data.objectKey,
-        originalFileName: parsed.data.fileName,
-        uploadedBy: res.locals.auth?.email ?? null,
-        processingStatus: "UPLOADED",
-        processingError: null,
-        duration: parsed.data.duration ?? null,
-        mediaFormat: parsed.data.mediaFormat ?? parsed.data.contentType,
-        videoQuality: parsed.data.videoQuality ?? null,
+        duration: parsed.data.duration ?? video.duration,
+        mediaFormat: parsed.data.mediaFormat ?? video.mediaFormat ?? parsed.data.contentType,
+        videoQuality: parsed.data.videoQuality ?? video.videoQuality,
         audioTracks: parsed.data.audioTracks ?? undefined,
-        published: false,
       },
       include: { category: true, season: { include: { program: true } } },
     });
-    return res.status(201).json({ data: video });
+    return res.status(201).json({ data: updated });
   } catch (error) {
     console.error("Registrazione originale fallita", error);
     return res.status(409).json({ error: error instanceof Error ? error.message : "Registrazione media non riuscita" });
@@ -673,6 +718,20 @@ router.post("/multipart/complete", async (req, res) => {
         completedAt: new Date(),
       },
     });
+    const session = await prisma.mediaUploadSession.findFirst({
+      where: {
+        multipartUploadId: parsed.data.uploadId,
+        objectKey: parsed.data.objectKey,
+      },
+    });
+    const video = await registerCompletedOriginal({
+      logicalUploadId: session?.logicalUploadId,
+      objectKey: parsed.data.objectKey,
+      fileName: parsed.data.fileName,
+      contentType: parsed.data.contentType,
+      size: parsed.data.size,
+      uploadedBy: session?.createdBy ?? res.locals.auth?.email ?? null,
+    });
 
     return res.json({
       status: "uploaded",
@@ -680,6 +739,7 @@ router.post("/multipart/complete", async (req, res) => {
       objectKey: parsed.data.objectKey,
       publicUrl: `${r2Config.publicUrl}/${parsed.data.objectKey}`,
       originalFileName: parsed.data.fileName,
+      video,
     });
   } catch (error) {
     console.error("Completamento multipart R2 fallito", error);
