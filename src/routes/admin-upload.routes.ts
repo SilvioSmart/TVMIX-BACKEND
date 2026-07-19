@@ -213,6 +213,7 @@ const presignSchema = z.object({
   contentType: z.enum(contentTypes),
   size: z.number().int().positive(),
   videoId: z.string().uuid().optional(),
+  scope: z.enum(uploadScopes).default("video"),
 });
 
 const completeSchema = z.object({
@@ -220,6 +221,7 @@ const completeSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   contentType: z.enum(contentTypes),
   size: z.number().int().positive(),
+  scope: z.enum(uploadScopes).default("video"),
 });
 
 const multipartCreateSchema = presignSchema;
@@ -249,6 +251,26 @@ const multipartAbortSchema = z.object({
 const multipartResumeSchema = z.object({
   logicalUploadId: z.string().uuid(),
 });
+
+function scopedObjectKey(scope: typeof uploadScopes[number], fileName: string) {
+  const safeFileName = sanitizeR2FileName(fileName);
+  if (scope === "slide") return r2Key(`slide/${safeFileName}`);
+  if (scope === "thumbnail") return r2Key(`thumbnails/${safeFileName}`);
+  if (scope === "locandina") return r2Key(`locandine/${safeFileName}`);
+  if (scope === "notice_slide") return r2Key(`news/notice_slide/${safeFileName}`);
+  if (scope === "tg9_video") return r2Key(`news/tg9_video/${safeFileName}`);
+  return r2Key(`originals/${safeFileName}`);
+}
+
+function isAllowedMultipartObjectKey(objectKey: string, scope: typeof uploadScopes[number]) {
+  if (scope === "video") return isOriginalObjectKey(objectKey);
+  const escapedPrefix = r2Config.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prefixPattern = escapedPrefix ? `${escapedPrefix}/` : "";
+  if (scope === "tg9_video") {
+    return new RegExp(`^${prefixPattern}news/tg9_video/[^/]+\\.(mp4|mov|mkv)$`).test(objectKey);
+  }
+  return false;
+}
 
 const streamingUploadSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -526,13 +548,13 @@ router.post("/multipart/create", async (req, res) => {
     });
   }
 
-  const { fileName, contentType, size, videoId } = parsed.data;
+  const { fileName, contentType, size, videoId, scope } = parsed.data;
   if (size > r2Config.maxUploadBytes) {
     return res.status(413).json({ error: "Il file supera la dimensione massima consentita" });
   }
 
   const logicalUploadId = videoId ?? randomUUID();
-  const objectKey = r2Key(`originals/${sanitizeR2FileName(fileName)}`);
+  const objectKey = scopedObjectKey(scope, fileName);
 
   try {
     const existing = await prisma.mediaUploadSession.findUnique({
@@ -560,6 +582,7 @@ router.post("/multipart/create", async (req, res) => {
         Metadata: {
           "original-name": encodeURIComponent(fileName),
           "upload-id": logicalUploadId,
+          scope,
         },
       }),
     );
@@ -683,7 +706,7 @@ router.post("/multipart/complete", async (req, res) => {
     });
   }
 
-  if (!isOriginalObjectKey(parsed.data.objectKey)) {
+  if (!isAllowedMultipartObjectKey(parsed.data.objectKey, parsed.data.scope)) {
     return res.status(400).json({ error: "Chiave oggetto R2 non valida" });
   }
 
@@ -704,7 +727,7 @@ router.post("/multipart/complete", async (req, res) => {
       }),
     );
 
-    await verifyOriginalObject(
+    await verifyR2Object(
       parsed.data.objectKey,
       parsed.data.size,
       parsed.data.contentType,
@@ -731,14 +754,16 @@ router.post("/multipart/complete", async (req, res) => {
         objectKey: parsed.data.objectKey,
       },
     });
-    const video = await registerCompletedOriginal({
-      logicalUploadId: session?.logicalUploadId,
-      objectKey: parsed.data.objectKey,
-      fileName: parsed.data.fileName,
-      contentType: parsed.data.contentType,
-      size: parsed.data.size,
-      uploadedBy: session?.createdBy ?? await currentUserDisplayName(res),
-    });
+    const video = parsed.data.scope === "video"
+      ? await registerCompletedOriginal({
+        logicalUploadId: session?.logicalUploadId,
+        objectKey: parsed.data.objectKey,
+        fileName: parsed.data.fileName,
+        contentType: parsed.data.contentType,
+        size: parsed.data.size,
+        uploadedBy: session?.createdBy ?? await currentUserDisplayName(res),
+      })
+      : null;
 
     return res.json({
       status: "uploaded",
@@ -746,7 +771,7 @@ router.post("/multipart/complete", async (req, res) => {
       objectKey: parsed.data.objectKey,
       publicUrl: `${r2Config.publicUrl}/${parsed.data.objectKey}`,
       originalFileName: parsed.data.fileName,
-      video,
+      ...(video ? { video } : {}),
     });
   } catch (error) {
     console.error("Completamento multipart R2 fallito", error);
