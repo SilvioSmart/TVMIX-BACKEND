@@ -12,6 +12,7 @@ import adminCarouselRoutes from "./admin-carousel.routes.js";
 import adminHomeModuleRoutes from "./admin-home-module.routes.js";
 import adminEpgRoutes from "./admin-epg.routes.js";
 import adminRouteConfigRoutes from "./admin-route-config.routes.js";
+import adminNewsRoutes from "./admin-news.routes.js";
 
 const router = Router();
 
@@ -44,6 +45,7 @@ router.use("/frontend-menu", canManageAppearance, adminFrontendMenuRoutes);
 router.use("/epg", canManageLive, adminEpgRoutes);
 router.use("/categories", canManageCatalog, adminCategoryRoutes);
 router.use("/live-streams", canManageLive, adminLiveStreamRoutes);
+router.use("/news", canManageContent, adminNewsRoutes);
 router.use("/users", canManageUsers, adminUserRoutes);
 
 export default router;

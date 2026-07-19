@@ -36,7 +36,7 @@ const extensionContentType: Record<string, typeof contentTypes[number]> = {
 };
 const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 const imageContentTypes = slideContentTypes;
-const uploadScopes = ["video", "slide", "thumbnail", "locandina"] as const;
+const uploadScopes = ["video", "slide", "thumbnail", "locandina", "notice_slide", "tg9_video"] as const;
 const multipartPartSize = 64 * 1024 * 1024;
 
 function serializeUploadSession<T extends { size: bigint }>(session: T) {
@@ -258,20 +258,20 @@ const streamingUploadSchema = z.object({
   scope: z.enum(uploadScopes).default("video"),
 }).superRefine((value, ctx) => {
   if (
-    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina") &&
+    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina" || value.scope === "notice_slide") &&
     !imageContentTypes.includes(value.contentType as typeof imageContentTypes[number])
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["contentType"],
-      message: "Per slide, thumbnail e locandine sono ammessi solo JPG, PNG, WebP o GIF",
+      message: "Per slide, thumbnail, locandine e immagini news sono ammessi solo JPG, PNG, WebP o GIF",
     });
   }
-  if (value.scope === "video" && !contentTypes.includes(value.contentType as typeof contentTypes[number])) {
+  if ((value.scope === "video" || value.scope === "tg9_video") && !contentTypes.includes(value.contentType as typeof contentTypes[number])) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["contentType"],
-      message: "Per i contenuti sono ammessi solo MP4, MOV o MKV",
+      message: "Per i contenuti video sono ammessi solo MP4, MOV o MKV",
     });
   }
 });
@@ -476,7 +476,11 @@ router.post("/file", async (req, res) => {
         ? `thumbnails/${safeFileName}`
         : parsed.data.scope === "locandina"
           ? `locandine/${safeFileName}`
-          : `originals/${safeFileName}`,
+          : parsed.data.scope === "notice_slide"
+            ? `news/notice_slide/${safeFileName}`
+            : parsed.data.scope === "tg9_video"
+              ? `news/tg9_video/${safeFileName}`
+              : `originals/${safeFileName}`,
   );
 
   try {
