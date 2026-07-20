@@ -77,6 +77,43 @@ export async function resolveModuleEpg(module: {
 }) {
   if (!module.liveStreamId) return [];
 
+  const liveStream = await prisma.liveStream.findUnique({
+    where: { id: module.liveStreamId },
+    select: { streamType: true },
+  });
+
+  if (liveStream?.streamType === "PLAYLIST") {
+    return prisma.liveEpgItem.findMany({
+      where: { liveStreamId: module.liveStreamId },
+      include: {
+        video: {
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            description: true,
+            thumbnailUrl: true,
+            hlsUrl: true,
+            duration: true,
+            episodeNumber: true,
+            episodeCode: true,
+            category: { select: { id: true, name: true, slug: true } },
+            season: {
+              select: {
+                id: true,
+                number: true,
+                title: true,
+                program: { select: { id: true, name: true, slug: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ startsAt: "asc" }],
+      take: 96,
+    });
+  }
+
   const now = new Date();
   const windowEnd = new Date(now.getTime() + 1000 * 60 * 60 * 12);
 

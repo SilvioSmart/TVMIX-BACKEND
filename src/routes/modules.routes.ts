@@ -27,6 +27,7 @@ router.get("/", async (_req, res) => {
           name: true,
           slug: true,
           description: true,
+          streamType: true,
           hlsUrl: true,
           posterUrl: true,
           status: true,
