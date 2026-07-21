@@ -145,6 +145,7 @@ const videoFields = z.object({
   description: z.string().trim().max(5000).nullable().optional(),
   thumbnailUrl: optionalUrlSchema,
   hlsUrl: optionalUrlSchema,
+  vastUrl: optionalUrlSchema,
   sourceObjectKey: z.string().trim().max(1000).nullable().optional(),
   convertedObjectKey: z.string().trim().max(1000).nullable().optional(),
   originalFileName: z.string().trim().max(255).nullable().optional(),

@@ -31,6 +31,7 @@ router.get("/", async (_req, res) => {
           slug: true,
           thumbnailUrl: true,
           hlsUrl: true,
+          vastUrl: true,
         },
       },
     },

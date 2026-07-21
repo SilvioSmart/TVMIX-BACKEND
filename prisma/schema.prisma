@@ -35,6 +35,7 @@ model Video {
   description      String?
   thumbnailUrl String?
   hlsUrl           String?
+  vastUrl          String?
   sourceObjectKey  String?
   originalFileName String?
   uploadedBy       String?

@@ -37,6 +37,7 @@ router.get("/", async (req, res) => {
         description: true,
         thumbnailUrl: true,
         hlsUrl: true,
+        vastUrl: true,
         duration: true,
         publishedAt: true,
         category: {
@@ -85,6 +86,7 @@ router.get("/:id", async (req, res) => {
       description: true,
       thumbnailUrl: true,
       hlsUrl: true,
+      vastUrl: true,
       duration: true,
       publishedAt: true,
       category: {
