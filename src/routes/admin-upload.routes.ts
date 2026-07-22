@@ -208,6 +208,20 @@ const remoteImportSchema = z.object({
   path: z.string().trim().min(1).max(1000),
 });
 
+const remoteImageImportSchema = z.object({
+  url: z.string().trim().url().max(2048),
+  fileName: z.string().trim().min(1).max(255).optional(),
+  scope: z.enum(uploadScopes).default("notice_slide"),
+}).strict().superRefine((value, ctx) => {
+  if (value.scope !== "slide" && value.scope !== "thumbnail" && value.scope !== "locandina" && value.scope !== "notice_slide") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scope"],
+      message: "L'import da URL è consentito solo per immagini",
+    });
+  }
+});
+
 const presignSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   contentType: z.enum(contentTypes),
@@ -260,6 +274,24 @@ function scopedObjectKey(scope: typeof uploadScopes[number], fileName: string) {
   if (scope === "notice_slide") return r2Key(`news/notice_slide/${safeFileName}`);
   if (scope === "tg9_video") return r2Key(`news/tg9_video/${safeFileName}`);
   return r2Key(`originals/${safeFileName}`);
+}
+
+function remoteFileNameFromUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const baseName = decodeURIComponent(path.posix.basename(parsed.pathname));
+    return baseName && baseName.includes(".") ? baseName : `remote-image-${Date.now()}`;
+  } catch {
+    return `remote-image-${Date.now()}`;
+  }
+}
+
+function extensionForImageContentType(contentType: string) {
+  if (contentType.includes("jpeg") || contentType.includes("jpg")) return ".jpg";
+  if (contentType.includes("png")) return ".png";
+  if (contentType.includes("webp")) return ".webp";
+  if (contentType.includes("gif")) return ".gif";
+  return "";
 }
 
 function isAllowedMultipartObjectKey(objectKey: string, scope: typeof uploadScopes[number]) {
@@ -462,6 +494,84 @@ router.post("/remote-import", async (req, res) => {
   } catch (error) {
     console.error("Import remoto originale fallito", error);
     return res.status(409).json({ error: error instanceof Error ? error.message : "Import remoto non riuscito" });
+  }
+});
+
+router.post("/remote-image", async (req, res) => {
+  const parsed = remoteImageImportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Dati immagine remota non validi", details: parsed.error.flatten().fieldErrors });
+  }
+
+  let remoteUrl: URL;
+  try {
+    remoteUrl = new URL(parsed.data.url);
+  } catch {
+    return res.status(400).json({ error: "URL immagine remota non valido" });
+  }
+  if (remoteUrl.protocol !== "http:" && remoteUrl.protocol !== "https:") {
+    return res.status(400).json({ error: "Sono consentiti solo URL http o https" });
+  }
+
+  try {
+    const response = await fetch(remoteUrl, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(45_000),
+      headers: {
+        accept: imageContentTypes.join(", "),
+        "user-agent": "TVMIX-MediaImporter/1.0",
+      },
+    });
+    if (!response.ok || !response.body) {
+      return res.status(502).json({ error: `Download immagine remota non riuscito (${response.status})` });
+    }
+
+    const contentType = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim().toLowerCase();
+    if (!imageContentTypes.includes(contentType as typeof imageContentTypes[number])) {
+      return res.status(400).json({ error: "Il file remoto non è un'immagine ammessa (JPG, PNG, WebP o GIF)" });
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+    if (contentLength && contentLength > r2Config.maxUploadBytes) {
+      return res.status(413).json({ error: "L'immagine remota supera la dimensione massima consentita" });
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) return res.status(400).json({ error: "L'immagine remota è vuota" });
+    if (buffer.length > r2Config.maxUploadBytes) {
+      return res.status(413).json({ error: "L'immagine remota supera la dimensione massima consentita" });
+    }
+
+    const requestedName = parsed.data.fileName || remoteFileNameFromUrl(parsed.data.url);
+    const extension = path.extname(requestedName) || extensionForImageContentType(contentType);
+    const safeFileName = sanitizeR2FileName(extension && requestedName.endsWith(extension) ? requestedName : `${requestedName}${extension}`);
+    const uploadId = randomUUID();
+    const objectKey = scopedObjectKey(parsed.data.scope, safeFileName);
+
+    await r2.send(new PutObjectCommand({
+      Bucket: r2Config.bucket,
+      Key: objectKey,
+      Body: buffer,
+      ContentType: contentType,
+      Metadata: {
+        "original-name": encodeURIComponent(requestedName),
+        "upload-id": uploadId,
+        "upload-source": "remote-url",
+        "source-url": encodeURIComponent(parsed.data.url).slice(0, 1024),
+      },
+    }));
+    await verifyR2Object(objectKey, buffer.length, contentType as typeof imageContentTypes[number]);
+
+    return res.status(201).json({
+      status: "uploaded",
+      uploadId,
+      objectKey,
+      publicUrl: `${r2Config.publicUrl}/${objectKey}`,
+      originalFileName: requestedName,
+    });
+  } catch (error) {
+    console.error("Import immagine remota fallito", error);
+    return res.status(502).json({ error: "Import immagine remota non riuscito" });
   }
 });
 
