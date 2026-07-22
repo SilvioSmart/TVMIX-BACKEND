@@ -6,6 +6,7 @@ const router = Router();
 router.get("/notice", async (_req, res) => {
   const data = await prisma.noticeArticle.findMany({
     where: { published: true },
+    include: { newsCategory: true },
     orderBy: [{ sortOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
     take: 100,
   });
@@ -18,6 +19,7 @@ router.get("/notice/:slug", async (req, res) => {
       slug: req.params.slug,
       published: true,
     },
+    include: { newsCategory: true },
   });
   if (!data) return res.status(404).json({ error: "Notizia non trovata" });
   return res.json({ data });

@@ -14,14 +14,25 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(100),
 });
 
+const newsCategorySchema = z.object({
+  name: z.string().trim().min(2).max(100),
+  slug: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(1000).nullable().optional(),
+  color: z.string().trim().max(32).nullable().optional(),
+  sortOrder: z.coerce.number().int().min(0).default(0),
+  enabled: z.boolean().default(true),
+});
+
 const noticeSchema = z.object({
   category: z.string().trim().min(1).max(80),
+  categoryId: z.string().uuid().nullable().optional(),
   title: z.string().trim().min(1).max(180),
   slug: z.string().trim().min(1).max(180).optional(),
   excerpt: z.string().trim().max(260).nullable().optional(),
   body: z.string().trim().min(1),
   imageUrl: z.string().url(),
   imageObjectKey: z.string().trim().max(1024).nullable().optional(),
+  vastUrl: z.string().trim().url().nullable().optional(),
   sortOrder: z.coerce.number().int().min(0).default(0),
   published: z.boolean().default(false),
 });
@@ -54,6 +65,17 @@ async function uniqueNoticeSlug(base: string, excludeId?: string) {
   let candidate = normalized;
   let suffix = 2;
   while (await prisma.noticeArticle.findFirst({ where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true } })) {
+    candidate = `${normalized}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function uniqueNewsCategorySlug(base: string, excludeId?: string) {
+  const normalized = slugify(base);
+  let candidate = normalized;
+  let suffix = 2;
+  while (await prisma.newsCategory.findFirst({ where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true } })) {
     candidate = `${normalized}-${suffix}`;
     suffix += 1;
   }
@@ -150,6 +172,86 @@ function pathExtension(fileName: string) {
   return match?.[0] ?? "";
 }
 
+async function categoryNameForNotice(categoryId: string | null | undefined, fallback: string) {
+  if (!categoryId) return fallback;
+  const category = await prisma.newsCategory.findUnique({ where: { id: categoryId }, select: { name: true } });
+  if (!category) throw new Error("Categoria news non trovata");
+  return category.name;
+}
+
+router.get("/categories", async (req, res) => {
+  const parsed = listSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: "Filtri categorie news non validi" });
+  const { search, limit } = parsed.data;
+  const where = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: "insensitive" as const } },
+          { slug: { contains: search, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+  const [data, total] = await prisma.$transaction([
+    prisma.newsCategory.findMany({
+      where,
+      include: { _count: { select: { notices: true } } },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      take: limit,
+    }),
+    prisma.newsCategory.count({ where }),
+  ]);
+  return res.json({ data, pagination: { page: 1, limit, total, totalPages: 1 } });
+});
+
+router.post("/categories", async (req, res) => {
+  const parsed = newsCategorySchema.strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati categoria news non validi", details: parsed.error.flatten().fieldErrors });
+  try {
+    const data = await prisma.newsCategory.create({
+      data: {
+        ...parsed.data,
+        slug: await uniqueNewsCategorySlug(parsed.data.slug || parsed.data.name),
+      },
+    });
+    return res.status(201).json({ data });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Creazione categoria news non riuscita" });
+  }
+});
+
+router.patch("/categories/:id", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "ID categoria news non valido" });
+  const parsed = newsCategorySchema.partial().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati categoria news non validi", details: parsed.error.flatten().fieldErrors });
+  try {
+    const data = await prisma.newsCategory.update({
+      where: { id: id.data },
+      data: {
+        ...parsed.data,
+        ...(parsed.data.slug || parsed.data.name ? { slug: await uniqueNewsCategorySlug(parsed.data.slug || parsed.data.name || "news", id.data) } : {}),
+      },
+    });
+    if (parsed.data.name) {
+      await prisma.noticeArticle.updateMany({ where: { categoryId: id.data }, data: { category: parsed.data.name } });
+    }
+    return res.json({ data });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Aggiornamento categoria news non riuscito" });
+  }
+});
+
+router.delete("/categories/:id", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "ID categoria news non valido" });
+  try {
+    await prisma.newsCategory.delete({ where: { id: id.data } });
+    return res.status(204).send();
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Eliminazione categoria news non riuscita" });
+  }
+});
+
 router.get("/notice", async (req, res) => {
   const parsed = listSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "Filtri 9notice non validi" });
@@ -165,6 +267,7 @@ router.get("/notice", async (req, res) => {
         ],
       } : {}),
     },
+    include: { newsCategory: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     take: limit,
   });
@@ -177,15 +280,18 @@ router.post("/notice", async (req, res) => {
   try {
     const createdBy = await currentUserDisplayName(res);
     const image = await normalizeNoticeImage({ imageUrl: parsed.data.imageUrl, imageObjectKey: parsed.data.imageObjectKey });
+    const category = await categoryNameForNotice(parsed.data.categoryId, parsed.data.category);
     const data = await prisma.noticeArticle.create({
       data: {
         ...parsed.data,
+        category,
         imageUrl: image.imageUrl,
         imageObjectKey: image.imageObjectKey ?? null,
         slug: await uniqueNoticeSlug(parsed.data.slug || parsed.data.title),
         publishedAt: publishedAtFor(parsed.data.published),
         createdBy,
       },
+      include: { newsCategory: true },
     });
     return res.status(201).json({ data });
   } catch (error) {
@@ -205,14 +311,19 @@ router.patch("/notice/:id", async (req, res) => {
     const image = parsed.data.imageUrl
       ? await normalizeNoticeImage({ imageUrl: parsed.data.imageUrl, imageObjectKey: parsed.data.imageObjectKey })
       : null;
+    const category = parsed.data.categoryId !== undefined
+      ? await categoryNameForNotice(parsed.data.categoryId, parsed.data.category ?? current.category)
+      : parsed.data.category;
     const data = await prisma.noticeArticle.update({
       where: { id: id.data },
       data: {
         ...parsed.data,
+        ...(category ? { category } : {}),
         ...(image ? { imageUrl: image.imageUrl, imageObjectKey: image.imageObjectKey ?? null } : {}),
         ...(parsed.data.slug || parsed.data.title ? { slug: await uniqueNoticeSlug(parsed.data.slug || parsed.data.title || current.title, id.data) } : {}),
         ...(parsed.data.published !== undefined ? { publishedAt: publishedAtFor(nextPublished, current.publishedAt) } : {}),
       },
+      include: { newsCategory: true },
     });
     return res.json({ data });
   } catch (error) {

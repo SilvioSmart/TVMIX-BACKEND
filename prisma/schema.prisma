@@ -288,22 +288,42 @@ model FrontendMenuItem {
 model NoticeArticle {
   id              String   @id @default(uuid()) @db.Uuid
   category        String
+  categoryId      String?  @db.Uuid
   title           String
   slug            String   @unique
   excerpt         String?
   body            String
   imageUrl        String
   imageObjectKey  String?
+  vastUrl         String?
   sortOrder       Int      @default(0)
   published       Boolean  @default(false)
   publishedAt     DateTime?
   createdBy       String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  newsCategory    NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   @@index([published, publishedAt])
   @@index([sortOrder, createdAt])
   @@index([category])
+  @@index([categoryId])
+}
+
+model NewsCategory {
+  id          String          @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String          @unique
+  description String?
+  color       String?
+  sortOrder   Int             @default(0)
+  enabled     Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  notices     NoticeArticle[]
+
+  @@index([enabled, sortOrder])
+  @@index([name])
 }
 
 model Tg9Video {
