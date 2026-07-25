@@ -36,7 +36,7 @@ const extensionContentType: Record<string, typeof contentTypes[number]> = {
 };
 const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 const imageContentTypes = slideContentTypes;
-const uploadScopes = ["video", "slide", "thumbnail", "locandina", "notice_slide", "tg9_video", "brand_logo", "brand_favicon"] as const;
+const uploadScopes = ["video", "slide", "thumbnail", "locandina", "notice_slide", "tg9_video", "brand_logo", "brand_favicon", "brand_default_thumbnail", "brand_default_signal"] as const;
 const multipartPartSize = 64 * 1024 * 1024;
 
 function serializeUploadSession<T extends { size: bigint }>(session: T) {
@@ -275,6 +275,8 @@ function scopedObjectKey(scope: typeof uploadScopes[number], fileName: string) {
   if (scope === "tg9_video") return r2Key(`news/tg9_video/${safeFileName}`);
   if (scope === "brand_logo") return r2Key(`brand/logo/${safeFileName}`);
   if (scope === "brand_favicon") return r2Key(`brand/favicon/${safeFileName}`);
+  if (scope === "brand_default_thumbnail") return r2Key(`brand/defaults/thumbnail/${safeFileName}`);
+  if (scope === "brand_default_signal") return r2Key(`brand/defaults/signal/${safeFileName}`);
   return r2Key(`originals/${safeFileName}`);
 }
 
@@ -314,7 +316,7 @@ const streamingUploadSchema = z.object({
   scope: z.enum(uploadScopes).default("video"),
 }).superRefine((value, ctx) => {
   if (
-    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina" || value.scope === "notice_slide" || value.scope === "brand_logo" || value.scope === "brand_favicon") &&
+    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina" || value.scope === "notice_slide" || value.scope === "brand_logo" || value.scope === "brand_favicon" || value.scope === "brand_default_thumbnail" || value.scope === "brand_default_signal") &&
     !imageContentTypes.includes(value.contentType as typeof imageContentTypes[number])
   ) {
     ctx.addIssue({

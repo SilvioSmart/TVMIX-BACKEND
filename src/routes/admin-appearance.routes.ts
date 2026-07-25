@@ -15,6 +15,10 @@ const brandSettingsSchema = z
     logoObjectKey: z.string().trim().min(1).max(512).nullable().optional(),
     faviconUrl: z.string().trim().url().nullable().optional(),
     faviconObjectKey: z.string().trim().min(1).max(512).nullable().optional(),
+    defaultThumbnailUrl: z.string().trim().url().nullable().optional(),
+    defaultThumbnailObjectKey: z.string().trim().min(1).max(512).nullable().optional(),
+    defaultSignalUrl: z.string().trim().url().nullable().optional(),
+    defaultSignalObjectKey: z.string().trim().min(1).max(512).nullable().optional(),
     accentColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, "Colore non valido: usa formato #RRGGBB").optional(),
   })
   .strict()
