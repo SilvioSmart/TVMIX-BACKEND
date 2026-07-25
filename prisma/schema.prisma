@@ -266,6 +266,18 @@ model AppearanceMenuItem {
   @@index([enabled, sortOrder])
 }
 
+model AppearanceBrandSettings {
+  id             String   @id @default("default") @db.VarChar(32)
+  platformName   String   @default("TVMIX")
+  logoUrl        String?
+  logoObjectKey  String?
+  faviconUrl     String?
+  faviconObjectKey String?
+  accentColor    String   @default("#16b9f4") @db.VarChar(16)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 model FrontendMenuItem {
   id        String            @id @default(uuid()) @db.Uuid
   label     String

@@ -36,7 +36,7 @@ const extensionContentType: Record<string, typeof contentTypes[number]> = {
 };
 const slideContentTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 const imageContentTypes = slideContentTypes;
-const uploadScopes = ["video", "slide", "thumbnail", "locandina", "notice_slide", "tg9_video"] as const;
+const uploadScopes = ["video", "slide", "thumbnail", "locandina", "notice_slide", "tg9_video", "brand_logo", "brand_favicon"] as const;
 const multipartPartSize = 64 * 1024 * 1024;
 
 function serializeUploadSession<T extends { size: bigint }>(session: T) {
@@ -273,6 +273,8 @@ function scopedObjectKey(scope: typeof uploadScopes[number], fileName: string) {
   if (scope === "locandina") return r2Key(`locandine/${safeFileName}`);
   if (scope === "notice_slide") return r2Key(`news/notice_slide/${safeFileName}`);
   if (scope === "tg9_video") return r2Key(`news/tg9_video/${safeFileName}`);
+  if (scope === "brand_logo") return r2Key(`brand/logo/${safeFileName}`);
+  if (scope === "brand_favicon") return r2Key(`brand/favicon/${safeFileName}`);
   return r2Key(`originals/${safeFileName}`);
 }
 
@@ -312,13 +314,13 @@ const streamingUploadSchema = z.object({
   scope: z.enum(uploadScopes).default("video"),
 }).superRefine((value, ctx) => {
   if (
-    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina" || value.scope === "notice_slide") &&
+    (value.scope === "slide" || value.scope === "thumbnail" || value.scope === "locandina" || value.scope === "notice_slide" || value.scope === "brand_logo" || value.scope === "brand_favicon") &&
     !imageContentTypes.includes(value.contentType as typeof imageContentTypes[number])
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["contentType"],
-      message: "Per slide, thumbnail, locandine e immagini news sono ammessi solo JPG, PNG, WebP o GIF",
+      message: "Per slide, thumbnail, locandine, immagini news e brand sono ammessi solo JPG, PNG, WebP o GIF",
     });
   }
   if ((value.scope === "video" || value.scope === "tg9_video") && !contentTypes.includes(value.contentType as typeof contentTypes[number])) {
