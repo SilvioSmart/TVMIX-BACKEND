@@ -24,7 +24,7 @@ const nullableCatalogIdSchema = z
 const moduleSchema = z.object({
   title: z.string().trim().min(2).max(140),
   subtitle: z.string().trim().max(240).nullable().optional(),
-  type: z.enum(["CAROUSEL_SLIDER", "LIVE_EPG", "POSTER_RAIL"]),
+  type: z.enum(["CAROUSEL_SLIDER", "LIVE_EPG", "POSTER_RAIL", "PROMOTIONS"]),
   queryType: z.enum(["LATEST", "CATEGORY", "PROGRAM", "SEASON", "MANUAL", "LIVE"]).default("LATEST"),
   sortMethod: z.enum(["RECENT", "OLDEST", "TITLE_ASC"]).default("RECENT"),
   sortOrder: z.coerce.number().int().min(0).max(9999),
@@ -63,7 +63,7 @@ async function replaceModuleItems(moduleId: string, videoIds?: string[]) {
 router.get("/", async (req, res) => {
   const query = paginationSchema
     .extend({
-      type: z.enum(["CAROUSEL_SLIDER", "LIVE_EPG", "POSTER_RAIL"]).optional(),
+      type: z.enum(["CAROUSEL_SLIDER", "LIVE_EPG", "POSTER_RAIL", "PROMOTIONS"]).optional(),
       enabled: z.coerce.boolean().optional(),
     })
     .safeParse(req.query);

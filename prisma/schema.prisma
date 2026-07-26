@@ -417,6 +417,7 @@ enum HomeModuleType {
   CAROUSEL_SLIDER
   LIVE_EPG
   POSTER_RAIL
+  PROMOTIONS
 }
 
 enum HomeModuleQueryType {
