@@ -48,6 +48,16 @@ const tg9Schema = z.object({
   published: z.boolean().default(false),
 });
 
+const tg9SubclipSchema = z.object({
+  title: z.string().trim().max(180).nullable().optional(),
+  startTime: z.coerce.number().int().min(0),
+  endTime: z.coerce.number().int().min(1),
+  sortOrder: z.coerce.number().int().min(0).default(0),
+}).refine((value) => value.endTime > value.startTime, {
+  message: "Il mark-out deve essere successivo al mark-in",
+  path: ["endTime"],
+});
+
 const noticeImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 
 function slugify(value: string) {
@@ -58,6 +68,14 @@ function slugify(value: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 160) || `news-${Date.now()}`;
+}
+
+function formatSecondsLabel(totalSeconds: number) {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
 }
 
 async function uniqueNoticeSlug(base: string, excludeId?: string) {
@@ -358,6 +376,7 @@ router.get("/tg9", async (req, res) => {
     },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
     take: limit,
+    include: { _count: { select: { subclips: true } } },
   });
   return res.json({ data });
 });
@@ -394,6 +413,49 @@ router.patch("/tg9/:id", async (req, res) => {
     },
   });
   return res.json({ data });
+});
+
+router.get("/tg9/:id/subclips", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "ID video TG9 non valido" });
+  const video = await prisma.tg9Video.findUnique({ where: { id: id.data }, select: { id: true } });
+  if (!video) return res.status(404).json({ error: "Video TG9 non trovato" });
+  const data = await prisma.tg9Subclip.findMany({
+    where: { tg9VideoId: id.data },
+    orderBy: [{ sortOrder: "asc" }, { startTime: "asc" }, { createdAt: "asc" }],
+  });
+  return res.json({ data });
+});
+
+router.post("/tg9/:id/subclips", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "ID video TG9 non valido" });
+  const parsed = tg9SubclipSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati sottoclip TG9 non validi", details: parsed.error.flatten().fieldErrors });
+  const video = await prisma.tg9Video.findUnique({ where: { id: id.data }, select: { id: true, title: true } });
+  if (!video) return res.status(404).json({ error: "Video TG9 non trovato" });
+  const createdBy = await currentUserDisplayName(res);
+  const data = await prisma.tg9Subclip.create({
+    data: {
+      tg9VideoId: id.data,
+      title: parsed.data.title || `${video.title} ${formatSecondsLabel(parsed.data.startTime)}-${formatSecondsLabel(parsed.data.endTime)}`,
+      startTime: parsed.data.startTime,
+      endTime: parsed.data.endTime,
+      sortOrder: parsed.data.sortOrder,
+      createdBy,
+    },
+  });
+  return res.status(201).json({ data });
+});
+
+router.delete("/tg9/:id/subclips/:subclipId", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  const subclipId = uuidSchema.safeParse(req.params.subclipId);
+  if (!id.success || !subclipId.success) return res.status(400).json({ error: "ID sottoclip TG9 non valido" });
+  const current = await prisma.tg9Subclip.findFirst({ where: { id: subclipId.data, tg9VideoId: id.data }, select: { id: true } });
+  if (!current) return res.status(404).json({ error: "Sottoclip TG9 non trovata" });
+  await prisma.tg9Subclip.delete({ where: { id: subclipId.data } });
+  return res.status(204).send();
 });
 
 router.delete("/tg9/:id", async (req, res) => {
