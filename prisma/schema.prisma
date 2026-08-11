@@ -282,6 +282,22 @@ model AppearanceBrandSettings {
   updatedAt                 DateTime @updatedAt
 }
 
+model StaticPageContent {
+  slug        String   @id @db.VarChar(64)
+  title       String
+  subtitle    String?
+  body        String   @db.Text
+  seoTitle    String?
+  seoDescription String?
+  published   Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([published, sortOrder])
+}
+
 model FrontendMenuItem {
   id         String              @id @default(uuid()) @db.Uuid
   label      String

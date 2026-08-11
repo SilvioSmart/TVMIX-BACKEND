@@ -12,6 +12,7 @@ import carouselRoutes from "./routes/carousel.routes.js";
 import moduleRoutes from "./routes/modules.routes.js";
 import newsRoutes from "./routes/news.routes.js";
 import appearanceRoutes from "./routes/appearance.routes.js";
+import pageRoutes from "./routes/page.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import { prisma } from "./lib/prisma.js";
 import { closeTranscodeQueue } from "./lib/transcodeQueue.js";
@@ -95,6 +96,7 @@ app.use("/api/v1/carousel", carouselRoutes);
 app.use("/api/v1/modules", moduleRoutes);
 app.use("/api/v1/news", newsRoutes);
 app.use("/api/v1/appearance", appearanceRoutes);
+app.use("/api/v1/pages", pageRoutes);
 app.use("/internal", internalWebhookRoutes);
 
 app.use((_req, res) => {

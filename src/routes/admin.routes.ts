@@ -13,6 +13,7 @@ import adminHomeModuleRoutes from "./admin-home-module.routes.js";
 import adminEpgRoutes from "./admin-epg.routes.js";
 import adminRouteConfigRoutes from "./admin-route-config.routes.js";
 import adminNewsRoutes from "./admin-news.routes.js";
+import adminSettingsRoutes from "./admin-settings.routes.js";
 
 const router = Router();
 
@@ -24,12 +25,13 @@ const canManageCatalog = requireRoleOrPermission(["EDITOR", "ADMIN"], ["CATALOG_
 const canManageLive = requireRoleOrPermission(["EDITOR", "ADMIN"], ["LIVE_MANAGE"]);
 const canManageAppearance = requireRoleOrPermission(["EDITOR", "ADMIN"], ["APPEARANCE_MANAGE"]);
 const canManageUsers = requireRoleOrPermission(["ADMIN"], ["USERS_MANAGE"]);
+const canManageSettings = requireRoleOrPermission(["ADMIN"], ["SETTINGS_MANAGE"]);
 
 router.get("/", requireRoleOrPermission(["EDITOR", "ADMIN"], ["CONTENT_VIEW", "CONTENT_MANAGE", "CATALOG_MANAGE", "LIVE_MANAGE", "APPEARANCE_MANAGE", "USERS_MANAGE", "SETTINGS_MANAGE"]), (_req, res) => {
   res.json({
     service: "TVMIX Admin API",
     role: res.locals.auth.role,
-    resources: ["videos", "catalog", "categories", "live-streams", "appearance", "modules", "epg"],
+    resources: ["videos", "catalog", "categories", "live-streams", "appearance", "modules", "epg", "settings"],
     ...(res.locals.auth.role === "ADMIN" && { adminResources: ["users"] }),
   });
 });
@@ -46,6 +48,7 @@ router.use("/epg", canManageLive, adminEpgRoutes);
 router.use("/categories", canManageCatalog, adminCategoryRoutes);
 router.use("/live-streams", canManageLive, adminLiveStreamRoutes);
 router.use("/news", canManageContent, adminNewsRoutes);
+router.use("/settings", canManageSettings, adminSettingsRoutes);
 router.use("/users", canManageUsers, adminUserRoutes);
 
 export default router;
