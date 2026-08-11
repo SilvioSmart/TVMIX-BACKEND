@@ -44,21 +44,32 @@ const tg9Schema = z.object({
   videoUrl: z.string().url(),
   videoObjectKey: z.string().trim().max(1024).nullable().optional(),
   posterUrl: z.string().url().nullable().optional(),
+  subtitlesUrl: z.string().trim().url().nullable().optional(),
   sortOrder: z.coerce.number().int().min(0).default(0),
   published: z.boolean().default(false),
 });
 
-const tg9SubclipSchema = z.object({
+const tg9SubclipBaseSchema = z.object({
   title: z.string().trim().max(180).nullable().optional(),
+  slug: z.string().trim().min(1).max(180).nullable().optional(),
+  vastUrl: z.string().trim().url().nullable().optional(),
   startTime: z.coerce.number().int().min(0),
   endTime: z.coerce.number().int().min(1),
   sortOrder: z.coerce.number().int().min(0).default(0),
-}).refine((value) => value.endTime > value.startTime, {
+});
+
+const tg9SubclipSchema = tg9SubclipBaseSchema.refine((value) => value.endTime > value.startTime, {
   message: "Il mark-out deve essere successivo al mark-in",
   path: ["endTime"],
 });
 
+const tg9SubclipUpdateSchema = tg9SubclipBaseSchema.partial();
+
 const noticeImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
+const posterDataUrlSchema = z.object({
+  dataUrl: z.string().startsWith("data:image/"),
+  fileName: z.string().trim().max(180).optional(),
+});
 
 function slugify(value: string) {
   return value
@@ -105,6 +116,17 @@ async function uniqueTg9Slug(base: string, excludeId?: string) {
   let candidate = normalized;
   let suffix = 2;
   while (await prisma.tg9Video.findFirst({ where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true } })) {
+    candidate = `${normalized}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+async function uniqueTg9SubclipSlug(base: string, excludeId?: string) {
+  const normalized = slugify(base);
+  let candidate = normalized;
+  let suffix = 2;
+  while (await prisma.tg9Subclip.findFirst({ where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true } })) {
     candidate = `${normalized}-${suffix}`;
     suffix += 1;
   }
@@ -439,6 +461,8 @@ router.post("/tg9/:id/subclips", async (req, res) => {
     data: {
       tg9VideoId: id.data,
       title: parsed.data.title || `${video.title} ${formatSecondsLabel(parsed.data.startTime)}-${formatSecondsLabel(parsed.data.endTime)}`,
+      slug: await uniqueTg9SubclipSlug(parsed.data.slug || `${video.title}-${parsed.data.startTime}-${parsed.data.endTime}`),
+      vastUrl: parsed.data.vastUrl || null,
       startTime: parsed.data.startTime,
       endTime: parsed.data.endTime,
       sortOrder: parsed.data.sortOrder,
@@ -446,6 +470,56 @@ router.post("/tg9/:id/subclips", async (req, res) => {
     },
   });
   return res.status(201).json({ data });
+});
+
+router.patch("/tg9/:id/subclips/:subclipId", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  const subclipId = uuidSchema.safeParse(req.params.subclipId);
+  if (!id.success || !subclipId.success) return res.status(400).json({ error: "ID sottoclip TG9 non valido" });
+  const parsed = tg9SubclipUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Dati sottoclip TG9 non validi", details: parsed.error.flatten().fieldErrors });
+  const current = await prisma.tg9Subclip.findFirst({ where: { id: subclipId.data, tg9VideoId: id.data } });
+  if (!current) return res.status(404).json({ error: "Sottoclip TG9 non trovata" });
+  const nextStart = parsed.data.startTime ?? current.startTime;
+  const nextEnd = parsed.data.endTime ?? current.endTime;
+  if (nextEnd <= nextStart) return res.status(400).json({ error: "Il mark-out deve essere successivo al mark-in" });
+  const data = await prisma.tg9Subclip.update({
+    where: { id: subclipId.data },
+    data: {
+      ...parsed.data,
+      ...(parsed.data.slug || parsed.data.title ? { slug: await uniqueTg9SubclipSlug(parsed.data.slug || parsed.data.title || current.slug || current.id, subclipId.data) } : {}),
+      vastUrl: parsed.data.vastUrl === undefined ? undefined : parsed.data.vastUrl || null,
+      title: parsed.data.title === undefined ? undefined : parsed.data.title || null,
+    },
+  });
+  return res.json({ data });
+});
+
+router.post("/tg9/:id/poster", async (req, res) => {
+  const id = uuidSchema.safeParse(req.params.id);
+  if (!id.success) return res.status(400).json({ error: "ID video TG9 non valido" });
+  const parsed = posterDataUrlSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Poster TG9 non valido", details: parsed.error.flatten().fieldErrors });
+  const current = await prisma.tg9Video.findUnique({ where: { id: id.data }, select: { id: true, slug: true } });
+  if (!current) return res.status(404).json({ error: "Video TG9 non trovato" });
+  const match = parsed.data.dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/);
+  if (!match) return res.status(400).json({ error: "Sono ammessi poster PNG, JPG o WebP" });
+  const contentType = match[1];
+  const encoded = match[2];
+  if (!contentType || !encoded) return res.status(400).json({ error: "Poster TG9 non valido" });
+  const extension = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
+  const safeFileName = sanitizeR2FileName(parsed.data.fileName || `${current.slug}-poster-${Date.now()}.${extension}`);
+  const objectKey = r2Key(`news/tg9_poster/${safeFileName.replace(/\.[^.]+$/, "")}.${extension}`);
+  const body = Buffer.from(encoded, "base64");
+  await r2.send(new PutObjectCommand({
+    Bucket: r2Config.bucket,
+    Key: objectKey,
+    Body: body,
+    ContentType: contentType,
+  }));
+  const posterUrl = `${r2Config.publicUrl}/${objectKey}`;
+  const data = await prisma.tg9Video.update({ where: { id: id.data }, data: { posterUrl } });
+  return res.status(201).json({ data: { posterUrl, video: data } });
 });
 
 router.delete("/tg9/:id/subclips/:subclipId", async (req, res) => {

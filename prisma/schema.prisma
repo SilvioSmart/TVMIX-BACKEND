@@ -350,6 +350,7 @@ model Tg9Video {
   videoUrl       String
   videoObjectKey String?
   posterUrl      String?
+  subtitlesUrl   String?
   sortOrder      Int          @default(0)
   published      Boolean      @default(false)
   publishedAt    DateTime?
@@ -366,6 +367,8 @@ model Tg9Subclip {
   id         String   @id @default(uuid()) @db.Uuid
   tg9VideoId String   @db.Uuid
   title      String?
+  slug       String?  @unique
+  vastUrl    String?
   startTime  Int
   endTime    Int
   sortOrder  Int      @default(0)
