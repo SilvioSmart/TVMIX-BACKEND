@@ -112,22 +112,23 @@ async function uniqueNewsCategorySlug(base: string, excludeId?: string) {
 }
 
 async function uniqueTg9Slug(base: string, excludeId?: string) {
-  const normalized = slugify(base);
-  let candidate = normalized;
-  let suffix = 2;
+  const root = slugify(base).slice(0, 5) || "tg9";
+  let suffix = 1;
+  let candidate = `${root}${suffix}`;
   while (await prisma.tg9Video.findFirst({ where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true } })) {
-    candidate = `${normalized}-${suffix}`;
     suffix += 1;
+    candidate = `${root}${suffix}`;
   }
   return candidate;
 }
 
-async function uniqueTg9SubclipSlug(base: string, excludeId?: string) {
-  const normalized = slugify(base);
-  let candidate = normalized;
+async function uniqueTg9TimelineSlug(videoSlug: string, timelinePosition: number, excludeId?: string) {
+  const root = slugify(videoSlug).slice(0, 80) || "tg9";
+  const position = Math.max(1, Math.floor(timelinePosition));
+  let candidate = `${root}-${position}`;
   let suffix = 2;
   while (await prisma.tg9Subclip.findFirst({ where: { slug: candidate, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true } })) {
-    candidate = `${normalized}-${suffix}`;
+    candidate = `${root}-${position}-${suffix}`;
     suffix += 1;
   }
   return candidate;
@@ -410,7 +411,7 @@ router.post("/tg9", async (req, res) => {
   const data = await prisma.tg9Video.create({
     data: {
       ...parsed.data,
-      slug: await uniqueTg9Slug(parsed.data.slug || parsed.data.title),
+      slug: await uniqueTg9Slug(parsed.data.title),
       publishedAt: publishedAtFor(parsed.data.published),
       createdBy,
     },
@@ -430,7 +431,7 @@ router.patch("/tg9/:id", async (req, res) => {
     where: { id: id.data },
     data: {
       ...parsed.data,
-      ...(parsed.data.slug || parsed.data.title ? { slug: await uniqueTg9Slug(parsed.data.slug || parsed.data.title || current.title, id.data) } : {}),
+      ...(parsed.data.slug || parsed.data.title ? { slug: await uniqueTg9Slug(parsed.data.title || current.title, id.data) } : {}),
       ...(parsed.data.published !== undefined ? { publishedAt: publishedAtFor(nextPublished, current.publishedAt) } : {}),
     },
   });
@@ -454,14 +455,14 @@ router.post("/tg9/:id/subclips", async (req, res) => {
   if (!id.success) return res.status(400).json({ error: "ID video TG9 non valido" });
   const parsed = tg9SubclipSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Dati sottoclip TG9 non validi", details: parsed.error.flatten().fieldErrors });
-  const video = await prisma.tg9Video.findUnique({ where: { id: id.data }, select: { id: true, title: true } });
+  const video = await prisma.tg9Video.findUnique({ where: { id: id.data }, select: { id: true, title: true, slug: true } });
   if (!video) return res.status(404).json({ error: "Video TG9 non trovato" });
   const createdBy = await currentUserDisplayName(res);
   const data = await prisma.tg9Subclip.create({
     data: {
       tg9VideoId: id.data,
       title: parsed.data.title || `${video.title} ${formatSecondsLabel(parsed.data.startTime)}-${formatSecondsLabel(parsed.data.endTime)}`,
-      slug: await uniqueTg9SubclipSlug(parsed.data.slug || `${video.title}-${parsed.data.startTime}-${parsed.data.endTime}`),
+      slug: await uniqueTg9TimelineSlug(video.slug, parsed.data.sortOrder + 1),
       vastUrl: parsed.data.vastUrl || null,
       startTime: parsed.data.startTime,
       endTime: parsed.data.endTime,
@@ -483,11 +484,14 @@ router.patch("/tg9/:id/subclips/:subclipId", async (req, res) => {
   const nextStart = parsed.data.startTime ?? current.startTime;
   const nextEnd = parsed.data.endTime ?? current.endTime;
   if (nextEnd <= nextStart) return res.status(400).json({ error: "Il mark-out deve essere successivo al mark-in" });
+  const video = await prisma.tg9Video.findUnique({ where: { id: id.data }, select: { slug: true } });
+  if (!video) return res.status(404).json({ error: "Video TG9 non trovato" });
+  const timelinePosition = (parsed.data.sortOrder ?? current.sortOrder) + 1;
   const data = await prisma.tg9Subclip.update({
     where: { id: subclipId.data },
     data: {
       ...parsed.data,
-      ...(parsed.data.slug || parsed.data.title ? { slug: await uniqueTg9SubclipSlug(parsed.data.slug || parsed.data.title || current.slug || current.id, subclipId.data) } : {}),
+      slug: await uniqueTg9TimelineSlug(video.slug, timelinePosition, subclipId.data),
       vastUrl: parsed.data.vastUrl === undefined ? undefined : parsed.data.vastUrl || null,
       title: parsed.data.title === undefined ? undefined : parsed.data.title || null,
     },
