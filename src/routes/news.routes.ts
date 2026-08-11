@@ -28,6 +28,11 @@ router.get("/notice/:slug", async (req, res) => {
 router.get("/tg9", async (_req, res) => {
   const data = await prisma.tg9Video.findMany({
     where: { published: true },
+    include: {
+      subclips: {
+        orderBy: [{ sortOrder: "asc" }, { startTime: "asc" }, { createdAt: "asc" }],
+      },
+    },
     orderBy: [{ sortOrder: "asc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
     take: 100,
   });
