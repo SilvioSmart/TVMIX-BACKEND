@@ -13,12 +13,22 @@ const pageSlugSchema = z.enum([
   "privacy-policy",
   "cookie",
 ]);
+const alignmentSchema = z.enum(["left", "center", "right", "justify"]);
+const fontSizeSchema = z.coerce.number().int().min(10).max(96);
 
 const pageSchema = z
   .object({
     title: z.string().trim().min(2).max(160).optional(),
+    titleFontSize: fontSizeSchema.optional(),
+    titleAlign: alignmentSchema.optional(),
     subtitle: z.string().trim().max(240).nullable().optional(),
+    subtitleFontSize: fontSizeSchema.optional(),
+    subtitleAlign: alignmentSchema.optional(),
+    heroImageUrl: z.string().trim().url().nullable().optional(),
     body: z.string().trim().min(1).max(100_000).optional(),
+    bodyHtml: z.string().trim().max(150_000).nullable().optional(),
+    bodyFontSize: fontSizeSchema.optional(),
+    bodyAlign: alignmentSchema.optional(),
     seoTitle: z.string().trim().max(180).nullable().optional(),
     seoDescription: z.string().trim().max(320).nullable().optional(),
     published: z.boolean().optional(),

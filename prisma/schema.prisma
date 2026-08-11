@@ -283,11 +283,19 @@ model AppearanceBrandSettings {
 }
 
 model StaticPageContent {
-  slug        String   @id @db.VarChar(64)
-  title       String
-  subtitle    String?
-  body        String   @db.Text
-  seoTitle    String?
+  slug              String   @id @db.VarChar(64)
+  title             String
+  titleFontSize     Int      @default(56)
+  titleAlign        String   @default("left") @db.VarChar(16)
+  subtitle          String?
+  subtitleFontSize  Int      @default(18)
+  subtitleAlign     String   @default("left") @db.VarChar(16)
+  heroImageUrl      String?
+  body              String   @db.Text
+  bodyHtml          String?  @db.Text
+  bodyFontSize      Int      @default(16)
+  bodyAlign         String   @default("left") @db.VarChar(16)
+  seoTitle          String?
   seoDescription String?
   published   Boolean  @default(true)
   sortOrder   Int      @default(0)
