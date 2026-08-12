@@ -13,6 +13,7 @@ router.get("/", async (_req, res) => {
       status: true,
       hlsUrl: true,
       posterUrl: true,
+      vastUrl: true,
       startedAt: true,
       endedAt: true,
       updatedAt: true,

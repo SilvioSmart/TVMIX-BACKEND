@@ -181,6 +181,7 @@ model LiveStream {
   hlsUrl      String
   status      LiveStreamStatus @default(OFFLINE)
   posterUrl   String?
+  vastUrl     String?
   startedAt   DateTime?
   endedAt     DateTime?
   homeModules HomeModule[]

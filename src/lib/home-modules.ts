@@ -124,32 +124,5 @@ export async function resolveModuleEpg(module: {
     });
   }
 
-  const now = new Date();
-  const windowEnd = new Date(now.getTime() + 1000 * 60 * 60 * 12);
-
-  return prisma.liveEpgItem.findMany({
-    where: {
-      liveStreamId: module.liveStreamId,
-      endsAt: { gte: now },
-      startsAt: { lte: windowEnd },
-    },
-    include: {
-      video: {
-        select: {
-          id: true,
-          title: true,
-          slug: true,
-          thumbnailUrl: true,
-          hlsUrl: true,
-          vastUrl: true,
-          duration: true,
-          mediaFormat: true,
-          videoQuality: true,
-          audioTracks: true,
-        },
-      },
-    },
-    orderBy: [{ startsAt: "asc" }],
-    take: 48,
-  });
+  return [];
 }

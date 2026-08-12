@@ -1,0 +1,1 @@
+ALTER TABLE "LiveStream" ADD COLUMN IF NOT EXISTS "vastUrl" TEXT;

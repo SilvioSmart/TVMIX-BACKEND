@@ -21,6 +21,7 @@ const liveStreamSchema = z.object({
   hlsUrl: z.string().trim().url(),
   status: z.enum(["OFFLINE", "LIVE", "SCHEDULED"]).default("OFFLINE"),
   posterUrl: optionalUrlSchema,
+  vastUrl: optionalUrlSchema,
   startedAt: nullableDateSchema,
   endedAt: nullableDateSchema,
 });
